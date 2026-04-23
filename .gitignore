@@ -18,3 +18,7 @@ iosApp/Pods
 androidApp/release/androidApp-release.apk
 /androidApp/sentry.properties
 androidApp/release/
+build_dist.log
+build_log.txt
+dev_run.log
+final_build.log

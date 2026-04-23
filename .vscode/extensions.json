@@ -1,0 +1,7 @@
+{
+    "recommendations": [
+        "vscjava.vscode-gradle",
+        "vue.volar",
+        "github.vscode-github-actions"
+    ]
+}

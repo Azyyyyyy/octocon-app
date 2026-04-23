@@ -1,0 +1,12 @@
+.git
+.github
+.gradle
+**/.gradle
+**/build
+**/out
+**/.idea
+**/.vscode
+**/.DS_Store
+website/node_modules
+website/.nuxt
+website/.output

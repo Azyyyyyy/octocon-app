@@ -161,3 +161,23 @@ Locally preview the production build:
 ```bash
 pnpm run preview
 ```
+
+### Building for production with Docker
+
+You can also build by running the included `Dockerfile.wasm`. 
+This image compiles `:webApp:wasmJsBrowserDistribution` and serves
+the generated static bundle with Nginx.
+
+Build the image from the repository root:
+
+```bash
+docker build -f Dockerfile.wasm -t octocon-wasm:latest .
+```
+
+Run it:
+
+```bash
+docker run --rm -p 8080:8080 octocon-wasm:latest
+```
+
+The app will be available at `http://localhost:8080`.
