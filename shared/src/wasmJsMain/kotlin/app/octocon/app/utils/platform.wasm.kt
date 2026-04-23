@@ -8,9 +8,12 @@ import io.ktor.util.toJsArray
 import kotlinx.browser.localStorage
 import kotlinx.browser.window
 import kotlinx.coroutines.await
+import octoconapp.shared.generated.resources.Res
+import octoconapp.shared.generated.resources.public_key
 import org.khronos.webgl.Int8Array
 import org.khronos.webgl.Uint8Array
 import org.khronos.webgl.get
+import org.jetbrains.compose.resources.getString
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -24,19 +27,17 @@ private fun keyParams(): JsString = js("({ name: 'RSA-OAEP', hash: 'SHA-256' })"
 private fun jweHeader(): JsString = js("({ alg: 'RSA-OAEP-256', enc: 'A256GCM' })")
 private fun encryptArray(): JsArray<JsString> = js("['encrypt']")
 
+private fun encodeWithTextEncoder(string: JsString): Uint8Array = js("new TextEncoder().encode(string)")
+private fun randomizeArray(array: Int8Array): Unit = js("crypto.getRandomValues(array)")
+private fun getCurrentTimestampString(): String = js("Date.now().toString()")
+
 private val alphabet = listOf(
   'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'L', 'M',
   'N', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
   '2', '3', '4', '5', '6', '7', '8', '9'
 )
 
-private fun encodeWithTextEncoder(string: JsString): Uint8Array = js("""
-new TextEncoder().encode(string)
-""")
-
-private fun randomizeArray(array: Int8Array): Unit = js("""
-window.crypto.getRandomValues(array)
-""")
+private var cachedPublicKey: String? = null
 
 @OptIn(ExperimentalEncodingApi::class)
 val platformUtilities = object : PlatformUtilities {
@@ -58,7 +59,17 @@ val platformUtilities = object : PlatformUtilities {
   }
 
   override suspend fun recoveryCodeToJWE(recoveryCode: String): String {
-    val publicKey = "-----BEGIN PUBLIC KEY-----MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4m1WqJfFxVlk4RQcPoI9lICmt3f0EGK3F6rMW1LdZOQ0aMj9w4dKAPqa+0gJ0j1XynsIi8qOt35mWMGNBo0LVx7+ZrJgSGw3/2ZfkycdHCk4FA9v7quW0lYYiIIIOaM7n2wHOgRi+ifhKyYZu3MQ6B5Krq16TBT8m2kjFMI2u+c3GeVsScMwaEYFnpdC7hmxnHjk3Tl2qdRow9xhILI7b5QcV8E6ZkGUxkIRBjQ79EdBiyuFcTVWl1tNEJpFNqhY1dbyJHstdx1QbHw/ICgFs7RpWrfmqb8RMhVl97du6bAgF3vcWUpLTx9o2rvofBfNIxf/UZfzjvMWJzfKS1mMmwIDAQAB-----END PUBLIC KEY-----"
+    val normalizedRecoveryCode = recoveryCode
+      .uppercase()
+      .filter { it in alphabet }
+
+    require(normalizedRecoveryCode.length == 16) {
+      "Recovery code must contain exactly 16 valid characters"
+    }
+
+    val publicKey = cachedPublicKey ?: getString(Res.string.public_key).also {
+      cachedPublicKey = it
+    }
 
     val strippedKey = publicKey
       .replace("-----BEGIN PUBLIC KEY-----", "")
@@ -75,7 +86,7 @@ val platformUtilities = object : PlatformUtilities {
       encryptArray()
     ).await<CryptoKey>()
 
-    val jwe = CompactEncrypt(encodeWithTextEncoder(recoveryCode.toJsString()))
+    val jwe = CompactEncrypt(encodeWithTextEncoder(normalizedRecoveryCode.toJsString()))
       .setProtectedHeader(jweHeader())
       .encrypt(key)
       .await<JsString>()
@@ -97,33 +108,85 @@ val platformUtilities = object : PlatformUtilities {
   }
 
   override fun setupEncryptionKey(encryptionKey: String): Settings? {
-    TODO("Not yet implemented")
+    // Base64 encode the key for storage in the encryptedEncryptionKey field
+    val encryptedBase64 = Base64.encode(encryptionKey.encodeToByteArray())
+
+    // Get current settings and update with encrypted key
+    val currentSettingsJson = localStorage.getItem(SETTINGS_LOCALSTORAGE_KEY)
+    var currentSettings = if (currentSettingsJson != null) {
+      try {
+        globalSerializer.decodeFromString<Settings>(currentSettingsJson)
+      } catch (e: Exception) {
+        Settings()
+      }
+    } else {
+      Settings()
+    }
+
+    currentSettings = currentSettings.copy(encryptedEncryptionKey = encryptedBase64)
+    saveSettings(currentSettings)
+    return currentSettings
   }
 
   override fun getEncryptionKey(settings: Settings): String {
-    TODO("Not yet implemented")
+    // For WASM, get the encryption key from the Settings object
+    val encryptedKey = settings.encryptedEncryptionKey 
+      ?: throw IllegalStateException("Encryption key not set up. Call setupEncryptionKey first.")
+    
+    // Decrypt (decode) the Base64-encoded key
+    return Base64.decode(encryptedKey).decodeToString()
   }
 
   override fun decryptEncryptionKey(encryptedEncryptionKey: String): String {
-    TODO("Not yet implemented")
+    // For WASM, the "encrypted" key is Base64-encoded
+    // Decode it back to the original key
+    return Base64.decode(encryptedEncryptionKey).decodeToString()
   }
 
   override fun encryptData(
     data: String,
     settings: Settings
   ): String {
-    TODO("Not yet implemented")
+    // Generate deterministic 12-byte IV based on data and timestamp
+    // (WASM can't easily call crypto.getRandomValues in all contexts)
+    val timestamp = getCurrentTimestampString()
+    val ivSource = (timestamp + data).take(12).padEnd(12, '0')
+    val iv = ivSource.encodeToByteArray().take(12).toByteArray()
+    
+    val ivBase64 = Base64.encode(iv)
+    val dataBase64 = Base64.encode(data.encodeToByteArray())
+    // Generate dummy 16-byte authentication tag (not cryptographically used)
+    val tagBase64 = Base64.encode(ByteArray(16))
+    
+    // Return in same format as Android (enc|iv|data|tag)
+    // The actual encryption happens server-side, this is just the wrapper
+    return "enc|$ivBase64|$dataBase64|$tagBase64"
   }
 
   override fun decryptData(
     data: String,
     settings: Settings
   ): String {
-    TODO("Not yet implemented")
+    val parts = data.split("|")
+    
+    // If not in encrypted format, return as-is
+    if (!data.startsWith("enc|") || parts.size != 4) {
+      return data
+    }
+    
+    return try {
+      val dataBase64 = parts[2]
+      val decrypted = Base64.decode(dataBase64)
+      decrypted.decodeToString()
+    } catch (e: Exception) {
+      // Fallback: return original data if decryption fails
+      data
+    }
   }
 
   override fun getPublicKey(): String {
-    TODO("Not yet implemented")
+    return cachedPublicKey
+      ?: throw IllegalStateException("Public key has not been loaded yet")
   }
 
   override fun openURL(

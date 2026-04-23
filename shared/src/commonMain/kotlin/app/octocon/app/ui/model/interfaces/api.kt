@@ -1072,7 +1072,7 @@ internal class ApiInterfaceImpl(
     )
 
   override fun loadAlterJournals(alterID: Int) =
-    sendAPIRequest(
+    sendAPIRequest<List<AlterJournalEntry>>(
       Get,
       "systems/me/alters/$alterID/journals"
     ) { isSuccess, response ->
@@ -1080,6 +1080,10 @@ internal class ApiInterfaceImpl(
         _alterJournals.tryEmit(
           _alterJournals.value.plus(alterID to response.data!!)
         )
+      } else {        
+        coroutineScope.launch {
+          _errorFlow.emit(response.error ?: "Failed to load alter journals")
+        }
       }
     }
 
@@ -1769,10 +1773,17 @@ internal class ApiInterfaceImpl(
         "endpoint",
         buildEndpointPayload(method, path, body)
       ) {
-        val (isSuccess, response) = responseFromAdapterMessage<ResponseType>(it)
-        callback?.invoke(isSuccess, response)
-        if (!isSuccess) {
-          _errorFlow.emit("Error: ${response.error ?: "Unknown error"}")
+        try {
+          val (isSuccess, response) = responseFromAdapterMessage<ResponseType>(it)
+          callback?.invoke(isSuccess, response)
+          if (!isSuccess) {
+            _errorFlow.emit("Error: ${response.error ?: "Unknown error"}")
+          }
+        } catch (e: Exception) {
+          platformLog("Failed to parse API response for $method $path: ${e.message ?: "Unknown error"}")
+          platformLog("Raw API response: $it")
+          callback?.invoke(false, APIResponse(error = "Failed to parse API response"))
+          _errorFlow.emit("Error: Failed to parse API response (${e.message ?: "Unknown error"})")
         }
       }
     }

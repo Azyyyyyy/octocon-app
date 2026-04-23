@@ -475,7 +475,9 @@ val httpBuilder: (token: String, body: Any) -> (HttpRequestBuilder.() -> Unit) =
   {
     headers {
       header("Authorization", "Bearer $token")
-      header("Content-Type", "application/json")
+      if (body !is MultiPartFormDataContent) {
+        header("Content-Type", "application/json")
+      }
     }
     setBody(body)
   }
@@ -523,7 +525,7 @@ suspend fun setAlterAvatar(token: String, alterID: Int, bytes: ByteArray, fileNa
       formData {
         append("file", bytes, Headers.build {
           append(HttpHeaders.ContentType, "image/${fileName.substringAfterLast(".")}")
-          append(HttpHeaders.ContentDisposition, "filename=\"${fileName}\"")
+          append(HttpHeaders.ContentDisposition, "form-data; name=\"file\"; filename=\"${fileName}\"")
         })
       },
       boundary = "OctoconBoundary"
@@ -536,7 +538,7 @@ suspend fun setSystemAvatar(token: String, bytes: ByteArray, fileName: String) =
       formData {
         append("file", bytes, Headers.build {
           append(HttpHeaders.ContentType, "image/${fileName.substringAfterLast(".")}")
-          append(HttpHeaders.ContentDisposition, "filename=\"${fileName}\"")
+          append(HttpHeaders.ContentDisposition, "form-data; name=\"file\"; filename=\"${fileName}\"")
         })
       },
       boundary = "OctoconBoundary"

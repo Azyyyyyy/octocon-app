@@ -47,6 +47,9 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
+import octoconapp.shared.generated.resources.Res
+import octoconapp.shared.generated.resources.public_key
+import org.jetbrains.compose.resources.getString
 import java.security.GeneralSecurityException
 import java.security.KeyFactory
 import java.security.SecureRandom
@@ -103,7 +106,7 @@ class MainActivity : AppCompatActivity() {
 
     override suspend fun recoveryCodeToJWE(recoveryCode: String): String {
       val publicKeyPEM =
-        getString(R.string.public_key)
+        getString(Res.string.public_key)
           .replace("-----BEGIN PUBLIC KEY-----", "")
           .replace("-----END PUBLIC KEY-----", "")
           .replace(System.lineSeparator(), "")

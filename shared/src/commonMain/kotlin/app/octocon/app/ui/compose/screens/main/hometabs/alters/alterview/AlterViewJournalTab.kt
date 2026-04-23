@@ -110,7 +110,7 @@ fun AlterViewJournalTab(
     component.navigateToJournalEntryView(hoistedEvent.entry.id)
   }
 
-  if (DevicePlatform.isWasm || (journalEntries == null || encryptionIsInitializing || !isLoaded)) {
+  if (journalEntries == null || encryptionIsInitializing || !isLoaded) {
     IndeterminateProgressSpinner()
     return
   }

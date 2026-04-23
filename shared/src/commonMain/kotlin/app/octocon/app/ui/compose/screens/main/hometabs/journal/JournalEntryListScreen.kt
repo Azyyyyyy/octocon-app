@@ -107,7 +107,7 @@ fun JournalEntryListScreen(
   val alters by api.alters.collectAsState()
 
   val ready by derive {
-    !DevicePlatform.isWasm && journalEntries.isSuccess && alters.isSuccess && system.isSuccess && !encryptionIsInitializing
+    journalEntries.isSuccess && alters.isSuccess && system.isSuccess && !encryptionIsInitializing
   }
 
   val sortedJournalEntries by derive {
