@@ -428,6 +428,14 @@
     <string name="custom_field_type_text">Text</string>
     <string name="custom_field_type_number">Number</string>
     <string name="custom_field_type_boolean">Yes/No</string>
+    <string name="custom_field_type_colour">Colour</string>
+    <string name="custom_field_type_date">Date</string>
+    <string name="custom_field_type_plaintext">Plain text</string>
+    <string name="custom_field_type_month">Month</string>
+    <string name="custom_field_type_year">Year</string>
+    <string name="custom_field_type_month_year">Month &amp; Year</string>
+    <string name="custom_field_type_timestamp">Timestamp</string>
+    <string name="custom_field_type_month_day">Month &amp; Day</string>
 
     <string name="confirm_delete_field">Are you sure you want to delete the custom field "%1$s"?</string>
     <string name="confirm_delete_tag">Are you sure you want to delete the tag "%1$s"?</string>

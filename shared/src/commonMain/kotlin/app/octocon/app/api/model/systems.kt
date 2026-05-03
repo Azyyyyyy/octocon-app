@@ -1,9 +1,14 @@
 package app.octocon.app.api.model
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CalendarToday
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Numbers
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.QuestionMark
-import androidx.compose.material.icons.rounded.TextFields
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Subject
+import androidx.compose.material.icons.rounded.Title
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import app.octocon.app.utils.compose
@@ -12,8 +17,16 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import octoconapp.shared.generated.resources.Res
 import octoconapp.shared.generated.resources.custom_field_type_boolean
+import octoconapp.shared.generated.resources.custom_field_type_colour
+import octoconapp.shared.generated.resources.custom_field_type_date
+import octoconapp.shared.generated.resources.custom_field_type_month
+import octoconapp.shared.generated.resources.custom_field_type_month_day
+import octoconapp.shared.generated.resources.custom_field_type_month_year
 import octoconapp.shared.generated.resources.custom_field_type_number
+import octoconapp.shared.generated.resources.custom_field_type_plaintext
 import octoconapp.shared.generated.resources.custom_field_type_text
+import octoconapp.shared.generated.resources.custom_field_type_timestamp
+import octoconapp.shared.generated.resources.custom_field_type_year
 
 interface SystemBase {
   val id: String
@@ -70,7 +83,7 @@ enum class CustomFieldType(
 ) {
   @SerialName("text")
   TEXT("text") {
-    override val icon: ImageVector by lazy { Icons.Rounded.TextFields }
+    override val icon: ImageVector by lazy { Icons.Rounded.Title }
   },
 
   @SerialName("number")
@@ -81,6 +94,46 @@ enum class CustomFieldType(
   @SerialName("boolean")
   BOOLEAN("boolean") {
     override val icon: ImageVector by lazy { Icons.Rounded.QuestionMark }
+  },
+
+  @SerialName("colour")
+  COLOUR("colour") {
+    override val icon: ImageVector by lazy { Icons.Rounded.Palette }
+  },
+
+  @SerialName("date")
+  DATE("date") {
+    override val icon: ImageVector by lazy { Icons.Rounded.CalendarToday }
+  },
+
+  @SerialName("plaintext")
+  PLAINTEXT("plaintext") {
+    override val icon: ImageVector by lazy { Icons.Rounded.Subject }
+  },
+
+  @SerialName("month")
+  MONTH("month") {
+    override val icon: ImageVector by lazy { Icons.Rounded.CalendarMonth }
+  },
+
+  @SerialName("year")
+  YEAR("year") {
+    override val icon: ImageVector by lazy { Icons.Rounded.CalendarMonth }
+  },
+
+  @SerialName("month_year")
+  MONTH_YEAR("month_year") {
+    override val icon: ImageVector by lazy { Icons.Rounded.CalendarMonth }
+  },
+
+  @SerialName("timestamp")
+  TIMESTAMP("timestamp") {
+    override val icon: ImageVector by lazy { Icons.Rounded.Schedule }
+  },
+
+  @SerialName("month_day")
+  MONTH_DAY("month_day") {
+    override val icon: ImageVector by lazy { Icons.Rounded.CalendarMonth }
   };
 
   abstract val icon: ImageVector
@@ -90,6 +143,14 @@ enum class CustomFieldType(
       TEXT -> Res.string.custom_field_type_text.compose
       NUMBER -> Res.string.custom_field_type_number.compose
       BOOLEAN -> Res.string.custom_field_type_boolean.compose
+      COLOUR -> Res.string.custom_field_type_colour.compose
+      DATE -> Res.string.custom_field_type_date.compose
+      PLAINTEXT -> Res.string.custom_field_type_plaintext.compose
+      MONTH -> Res.string.custom_field_type_month.compose
+      YEAR -> Res.string.custom_field_type_year.compose
+      MONTH_YEAR -> Res.string.custom_field_type_month_year.compose
+      TIMESTAMP -> Res.string.custom_field_type_timestamp.compose
+      MONTH_DAY -> Res.string.custom_field_type_month_day.compose
     }
 }
 
