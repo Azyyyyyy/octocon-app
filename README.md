@@ -181,3 +181,10 @@ docker run --rm -p 8080:8080 octocon-wasm:latest
 ```
 
 The app will be available at `http://localhost:8080`.
+
+The in-container port defaults to `8080` and can be overridden at run time
+via the `PORT` environment variable — no rebuild required:
+
+```bash
+docker run --rm -e PORT=9090 -p 9090:9090 octocon-wasm:latest
+```
