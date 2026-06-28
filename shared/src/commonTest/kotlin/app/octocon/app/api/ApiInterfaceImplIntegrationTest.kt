@@ -7,7 +7,7 @@ import app.octocon.app.api.model.SecurityLevel
 import app.octocon.app.api.model.SocketInitResponse
 import app.octocon.app.ui.compose.screens.main.hometabs.FakeSettingsInterface
 import app.octocon.app.ui.model.interfaces.ApiInterfaceImpl
-import app.octocon.app.utils.FakePlatformUtilities
+import app.octocon.app.utils.FailingPlatformUtilities
 import app.octocon.app.utils.globalSerializer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -139,7 +139,7 @@ class ApiInterfaceImplIntegrationTest {
     val scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
     return ApiInterfaceImpl(
       coroutineScope = scope,
-      platformUtilities = FakePlatformUtilities(),
+      platformUtilities = FailingPlatformUtilities(),
       settingsInterface = FakeSettingsInterface(Settings(isSinglet = false)),
       socketSessionFactory = factory,
     )

@@ -6,7 +6,7 @@ import app.octocon.app.ui.compose.screens.main.hometabs.FakeSettingsInterface
 import app.octocon.app.ui.model.CommonComponentContextImpl
 import app.octocon.app.ui.model.MainComponentContextImpl
 import app.octocon.app.ui.model.interfaces.ApiInterfaceImpl
-import app.octocon.app.utils.FakePlatformUtilities
+import app.octocon.app.utils.FailingPlatformUtilities
 import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.decompose.router.stack.StackNavigation
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
@@ -82,7 +82,7 @@ class HomeTabsLifecycleTest {
     val apiScope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
     val api = ApiInterfaceImpl(
       coroutineScope = apiScope,
-      platformUtilities = FakePlatformUtilities(),
+      platformUtilities = FailingPlatformUtilities(),
       settingsInterface = FakeSettingsInterface(Settings(isSinglet = isSinglet)),
       socketSessionFactory = FakePhoenixSocketSessionFactory(),
     )

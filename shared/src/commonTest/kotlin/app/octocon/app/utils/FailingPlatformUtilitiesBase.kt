@@ -2,12 +2,27 @@ package app.octocon.app.utils
 
 import app.octocon.app.Settings
 
-actual class FakePlatformUtilities actual constructor() : PlatformUtilities {
-  override var injectedPlatformDelegate: PlatformDelegate? = null
+/**
+ * Shared scaffolding for the per-platform [FailingPlatformUtilities] actuals.
+ * Implements every behavioural method on [CommonPlatformUtilities] with a
+ * single loud-fail tripwire so any unexpected call from a code path under test
+ * surfaces immediately with a clear, actionable message instead of silently
+ * succeeding or no-op-ing.
+ *
+ * Each platform actual extends this and only adds members its own
+ * `actual interface PlatformUtilities` declares beyond [CommonPlatformUtilities]
+ * (e.g. `context: Context` on Android, `injectedPlatformDelegate` on iOS).
+ */
+abstract class FailingPlatformUtilitiesBase : CommonPlatformUtilities {
+  private fun unsupported(): Nothing = error(
+    "FailingPlatformUtilities does not support PlatformUtilities calls in commonTest. " +
+      "If a unit test legitimately needs one, introduce a narrower seam (analogous to " +
+      "PhoenixSocketSessionFactory for ApiInterfaceImpl) and inject a behaviour-modelled fake."
+  )
 
-  private fun unsupported(): Nothing =
-    error("FakePlatformUtilities is not used by the home-tabs component tests")
-
+  // Unit-returning methods use block bodies so the actual's return type stays
+  // Unit (matching the expect/interface signature). Expression-body `= unsupported()`
+  // would infer `Nothing`, which Kotlin rejects as an actual/expect mismatch.
   override fun exitApplication(exitApplicationType: ExitApplicationType) { unsupported() }
   override fun saveSettings(settings: Settings) { unsupported() }
   override fun showAlert(message: String) { unsupported() }
@@ -24,7 +39,7 @@ actual class FakePlatformUtilities actual constructor() : PlatformUtilities {
   override fun openURL(
     url: String,
     colorSchemeParams: ColorSchemeParams,
-    webURLOpenBehavior: WebURLOpenBehavior
+    webURLOpenBehavior: WebURLOpenBehavior,
   ) { unsupported() }
   override fun updateWidgets(sessionInvalidated: Boolean) { unsupported() }
   override fun performAdditionalPushNotificationSetup() { unsupported() }
