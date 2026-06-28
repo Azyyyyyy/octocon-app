@@ -328,6 +328,29 @@ interface PhoenixSocketSession {
   fun sendMessage(event: String, payload: Map<String, Any?>, callback: suspend (String) -> Unit)
 }
 
+/**
+ * Factory seam for [PhoenixSocketSession]. Production wiring uses
+ * [DefaultPhoenixSocketSessionFactory], which delegates to the platform-actual
+ * [connectToPhoenixChannel]. Tests can supply a fake factory that returns an
+ * in-memory [PhoenixSocketSession] driven by scripted replies and events, so
+ * [app.octocon.app.ui.model.interfaces.ApiInterfaceImpl] can be exercised
+ * without a real backend or WebSocket.
+ */
+internal fun interface PhoenixSocketSessionFactory {
+  fun create(
+    token: String,
+    userID: String,
+    eventPipeline: MutableSharedFlow<ChannelMessage>,
+    errorPipeline: MutableSharedFlow<String>,
+    coroutineScope: CoroutineScope,
+    endpoint: String,
+    onConnected: (String) -> Unit,
+  ): PhoenixSocketSession
+}
+
+internal val DefaultPhoenixSocketSessionFactory: PhoenixSocketSessionFactory =
+  PhoenixSocketSessionFactory(::connectToPhoenixChannel)
+
 internal class KotlixPhoenixSocketSession(
   token: String,
   userID: String,

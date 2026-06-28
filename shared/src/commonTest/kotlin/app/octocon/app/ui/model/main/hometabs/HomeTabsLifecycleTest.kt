@@ -1,17 +1,20 @@
 package app.octocon.app.ui.model.main.hometabs
 
 import app.octocon.app.Settings
-import app.octocon.app.api.FakeApiInterface
+import app.octocon.app.api.FakePhoenixSocketSessionFactory
 import app.octocon.app.ui.compose.screens.main.hometabs.FakeSettingsInterface
 import app.octocon.app.ui.model.CommonComponentContextImpl
 import app.octocon.app.ui.model.MainComponentContextImpl
+import app.octocon.app.ui.model.interfaces.ApiInterfaceImpl
 import app.octocon.app.utils.FakePlatformUtilities
 import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.decompose.router.stack.StackNavigation
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import com.arkivanov.essenty.lifecycle.resume
 import com.arkivanov.essenty.lifecycle.start
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -23,9 +26,10 @@ import kotlin.test.assertTrue
  * whose `onStart` / `onResume` both call `navigateToFriendsIfNecessary`, which fires
  * `navigationWrapper(Config.Friends)` only when `settings.isSinglet` is `true`.
  *
- * Each test wires up a real component graph against fake `Api`/`Settings`/`PlatformUtilities`
- * implementations, drives the lifecycle forward via Essenty's manual API, and asserts on the
- * navigation callbacks captured by the harness.
+ * Each test wires up a real component graph against the real [ApiInterfaceImpl] (driven by a
+ * [FakePhoenixSocketSessionFactory], so no backend is needed) plus fake `Settings` and
+ * `PlatformUtilities` implementations, drives the lifecycle forward via Essenty's manual API,
+ * and asserts on the navigation callbacks captured by the harness.
  *
  * `LifecycleRegistry()` constructs in [com.arkivanov.essenty.lifecycle.Lifecycle.State.INITIALIZED].
  * The extension functions are additive:
@@ -71,11 +75,22 @@ class HomeTabsLifecycleTest {
   private fun newHomeTabs(isSinglet: Boolean): Harness {
     val lifecycle = LifecycleRegistry()
     val rootCtx = DefaultComponentContext(lifecycle = lifecycle)
+    // Real ApiInterfaceImpl wired to a fake socket factory. The lifecycle path
+    // never calls loadClient, so the factory's create() is never invoked. If a
+    // future change accidentally introduces an API call from the lifecycle
+    // path, the fake's loud-fail defaults will surface it immediately.
+    val apiScope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
+    val api = ApiInterfaceImpl(
+      coroutineScope = apiScope,
+      platformUtilities = FakePlatformUtilities(),
+      settingsInterface = FakeSettingsInterface(Settings(isSinglet = isSinglet)),
+      socketSessionFactory = FakePhoenixSocketSessionFactory(),
+    )
     val commonCtx = CommonComponentContextImpl(
       componentContext = rootCtx,
-      api = FakeApiInterface(),
-      settings = FakeSettingsInterface(Settings(isSinglet = isSinglet)),
-      platformUtilities = FakePlatformUtilities(),
+      api = api,
+      settings = api.settingsInterface,
+      platformUtilities = api.platformUtilities,
       coroutineContext = Dispatchers.Unconfined,
     )
     val mainCtx = MainComponentContextImpl(commonCtx)
