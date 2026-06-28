@@ -6,8 +6,14 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.SemanticsNodeInteractionsProvider
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.v2.runComposeUiTest
@@ -17,6 +23,13 @@ import app.octocon.app.ui.compose.NavigationType
 import app.octocon.app.ui.compose.theme.LocalOctoShapes
 import app.octocon.app.ui.compose.theme.LocalOctoTypography
 import com.arkivanov.decompose.extensions.compose.subscribeAsState
+import kotlinx.coroutines.runBlocking
+import octoconapp.shared.resources.Res
+import octoconapp.shared.resources.alters
+import octoconapp.shared.resources.friends
+import octoconapp.shared.resources.history
+import octoconapp.shared.resources.journal
+import org.jetbrains.compose.resources.getString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -27,6 +40,14 @@ import kotlin.test.assertEquals
  * [FakeHomeTabsComponent]; they never compose the surrounding `HomeTabsScreen`
  * (which would render real tab bodies via `ChildStack`) so there's no need for
  * the inner tab components to do anything useful.
+ *
+ * Tab items are located via [Role.Tab] + the tab's visible text label (see the
+ * `tab(...)` helper at the bottom of this file) — they carry no test tags in
+ * production because Material's `NavigationBarItem` / `NavigationRailItem`
+ * already expose role, label and selected state in the semantics tree. Only
+ * the two bar containers themselves use [HomeTabsTestTags], because Material
+ * exposes no distinguishing semantic on them. See the [HomeTabsTestTags]
+ * KDoc for the rationale.
  *
  * The eight cases below cover the four guarantees the bar contracts make:
  *  - all four tabs render when the system is not a singlet
@@ -48,10 +69,10 @@ class HomeTabsScaffoldTest {
     setContent { TestHomeTabsHost { TestBottomBar(fake) } }
 
     onNodeWithTag(HomeTabsTestTags.BOTTOM_BAR).assertExists()
-    onNodeWithTag(HomeTabsTestTags.TAB_ALTERS).assertExists()
-    onNodeWithTag(HomeTabsTestTags.TAB_HISTORY).assertExists()
-    onNodeWithTag(HomeTabsTestTags.TAB_JOURNAL).assertExists()
-    onNodeWithTag(HomeTabsTestTags.TAB_FRIENDS).assertExists()
+    tab(tabTitles.alters).assertExists()
+    tab(tabTitles.history).assertExists()
+    tab(tabTitles.journal).assertExists()
+    tab(tabTitles.friends).assertExists()
   }
 
   @Test
@@ -60,7 +81,7 @@ class HomeTabsScaffoldTest {
 
     setContent { TestHomeTabsHost { TestBottomBar(fake) } }
 
-    onNodeWithTag(HomeTabsTestTags.TAB_ALTERS).assertIsSelected()
+    tab(tabTitles.alters).assertIsSelected()
   }
 
   @Test
@@ -69,7 +90,7 @@ class HomeTabsScaffoldTest {
 
     setContent { TestHomeTabsHost { TestBottomBar(fake) } }
 
-    onNodeWithTag(HomeTabsTestTags.TAB_FRIENDS).assertIsSelected()
+    tab(tabTitles.friends).assertIsSelected()
   }
 
   @Test
@@ -78,7 +99,7 @@ class HomeTabsScaffoldTest {
 
     setContent { TestHomeTabsHost { TestBottomBar(fake) } }
 
-    onNodeWithTag(HomeTabsTestTags.TAB_JOURNAL).performClick()
+    tab(tabTitles.journal).performClick()
 
     assertEquals(1, fake.navigateToJournalCalls)
     assertEquals(0, fake.navigateToAltersCalls)
@@ -92,7 +113,7 @@ class HomeTabsScaffoldTest {
 
     setContent { TestHomeTabsHost { TestBottomBar(fake) } }
 
-    onNodeWithTag(HomeTabsTestTags.TAB_ALTERS).performClick()
+    tab(tabTitles.alters).performClick()
 
     assertEquals(0, fake.navigateToAltersCalls)
   }
@@ -106,10 +127,10 @@ class HomeTabsScaffoldTest {
     setContent { TestHomeTabsHost { TestNavigationRail(fake) } }
 
     onNodeWithTag(HomeTabsTestTags.NAVIGATION_RAIL).assertExists()
-    onNodeWithTag(HomeTabsTestTags.TAB_ALTERS).assertExists()
-    onNodeWithTag(HomeTabsTestTags.TAB_HISTORY).assertExists()
-    onNodeWithTag(HomeTabsTestTags.TAB_JOURNAL).assertExists()
-    onNodeWithTag(HomeTabsTestTags.TAB_FRIENDS).assertExists()
+    tab(tabTitles.alters).assertExists()
+    tab(tabTitles.history).assertExists()
+    tab(tabTitles.journal).assertExists()
+    tab(tabTitles.friends).assertExists()
   }
 
   @Test
@@ -118,7 +139,7 @@ class HomeTabsScaffoldTest {
 
     setContent { TestHomeTabsHost { TestNavigationRail(fake) } }
 
-    onNodeWithTag(HomeTabsTestTags.TAB_HISTORY).assertIsSelected()
+    tab(tabTitles.history).assertIsSelected()
   }
 
   @Test
@@ -127,7 +148,7 @@ class HomeTabsScaffoldTest {
 
     setContent { TestHomeTabsHost { TestNavigationRail(fake) } }
 
-    onNodeWithTag(HomeTabsTestTags.TAB_FRIENDS).performClick()
+    tab(tabTitles.friends).performClick()
 
     assertEquals(1, fake.navigateToFriendsCalls)
     assertEquals(0, fake.navigateToAltersCalls)
@@ -139,7 +160,7 @@ class HomeTabsScaffoldTest {
 
     setContent { TestHomeTabsHost { TestNavigationRail(fake) } }
 
-    onNodeWithTag(HomeTabsTestTags.TAB_JOURNAL).performClick()
+    tab(tabTitles.journal).performClick()
 
     assertEquals(0, fake.navigateToJournalCalls)
   }
@@ -159,7 +180,7 @@ class HomeTabsScaffoldTest {
 
     setContent { TestHomeTabsHost { TestBottomBar(fake) } }
 
-    onNodeWithTag(HomeTabsTestTags.TAB_ALTERS).assertIsSelected()
+    tab(tabTitles.alters).assertIsSelected()
   }
 
   @Test
@@ -171,7 +192,7 @@ class HomeTabsScaffoldTest {
 
     setContent { TestHomeTabsHost { TestBottomBar(fake) } }
 
-    onNodeWithTag(HomeTabsTestTags.TAB_FRIENDS).assertIsSelected()
+    tab(tabTitles.friends).assertIsSelected()
   }
 
   // -------- Full HomeTabsScreen composition --------------------------------------
@@ -191,7 +212,7 @@ class HomeTabsScaffoldTest {
     setContent { TestHomeTabsHost { TestHomeTabsScreen(fake, NavigationType.BOTTOM_BAR) } }
 
     onNodeWithTag(HomeTabsTestTags.BOTTOM_BAR).assertExists()
-    onNodeWithTag(HomeTabsTestTags.TAB_ALTERS).assertIsSelected()
+    tab(tabTitles.alters).assertIsSelected()
   }
 
   @Test
@@ -204,7 +225,7 @@ class HomeTabsScaffoldTest {
     setContent { TestHomeTabsHost { TestHomeTabsScreen(fake, NavigationType.RAIL) } }
 
     onNodeWithTag(HomeTabsTestTags.NAVIGATION_RAIL).assertExists()
-    onNodeWithTag(HomeTabsTestTags.TAB_ALTERS).assertIsSelected()
+    tab(tabTitles.alters).assertIsSelected()
   }
 
   @Test
@@ -225,6 +246,52 @@ class HomeTabsScaffoldTest {
 }
 
 // -------- Test helpers ------------------------------------------------------------
+
+/**
+ * Captured visible labels for the four tabs, resolved once via the non-composable
+ * `getString` so tests always reference what the *current locale* displays rather
+ * than hardcoded English literals. Resolution is suspending, so we cross the
+ * boundary with [runBlocking] in a top-level `lazy` — the test process only does
+ * this once.
+ */
+private data class TabTitles(
+  val alters: String,
+  val history: String,
+  val journal: String,
+  val friends: String,
+)
+
+private val tabTitles: TabTitles by lazy {
+  runBlocking {
+    TabTitles(
+      alters = getString(Res.string.alters),
+      history = getString(Res.string.history),
+      journal = getString(Res.string.journal),
+      friends = getString(Res.string.friends),
+    )
+  }
+}
+
+/**
+ * Matches any semantics node whose `Role` is [Role.Tab]. Material's
+ * `NavigationBarItem` and `NavigationRailItem` both set this internally via
+ * `Modifier.selectable(role = Role.Tab, ...)`, so the four tab items are
+ * locatable without any production-side test tag. See
+ * https://proandroiddev.com/stop-using-test-tags-in-the-jetpack-compose-production-code-b98e2679221f
+ * for the rationale.
+ */
+@OptIn(ExperimentalTestApi::class)
+private val TabRoleMatcher: SemanticsMatcher =
+  SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
+
+/**
+ * Locates a single tab by its visible text label, combining [TabRoleMatcher]
+ * with [hasText] so the matcher cannot accidentally bind to any other node
+ * that happens to expose the same text.
+ */
+@OptIn(ExperimentalTestApi::class)
+private fun SemanticsNodeInteractionsProvider.tab(title: String): SemanticsNodeInteraction =
+  onNode(TabRoleMatcher and hasText(title))
 
 private fun newFake(
   settings: Settings = Settings(),
@@ -282,11 +349,13 @@ private fun TestNavigationRail(fake: FakeHomeTabsComponent) {
 }
 
 /**
- * Composes the full [HomeTabsScreen] against a [FakeHomeTabsComponent], providing
- * [LocalNavigationType] (which `HomeTabsScreen` reads from the parent in
- * production via `MainAppScreen`) and an empty `renderChild` so we don't need real
- * tab screens. `HomeTabsScreen` provides `LocalFABIsCollapsed` and
- * `LocalUpdateLazyListState` itself, so nothing else has to be wired here.
+ * Composes the full [HomeTabsScreenContent] against a [FakeHomeTabsComponent],
+ * providing [LocalNavigationType] (which the screen reads from the parent in
+ * production via `MainAppScreen`) and an empty `renderChild` so we don't need
+ * real tab screens. The public `HomeTabsScreen` doesn't expose `renderChild`
+ * — the `internal` content overload does, and that's what `commonTest`
+ * reaches for here. `HomeTabsScreenContent` provides `LocalFABIsCollapsed`
+ * and `LocalUpdateLazyListState` itself, so nothing else has to be wired.
  */
 @Composable
 private fun TestHomeTabsScreen(
@@ -294,6 +363,6 @@ private fun TestHomeTabsScreen(
   navigationType: NavigationType
 ) {
   CompositionLocalProvider(LocalNavigationType provides navigationType) {
-    HomeTabsScreen(component = fake, renderChild = {})
+    HomeTabsScreenContent(component = fake, renderChild = {})
   }
 }

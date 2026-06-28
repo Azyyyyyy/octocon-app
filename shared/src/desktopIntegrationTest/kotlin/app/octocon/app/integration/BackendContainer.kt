@@ -10,12 +10,13 @@ import java.time.Duration
  * in-memory persistence mode.
  *
  * - REST + WebSocket share one Kestrel listener on container port 8080.
- * - The committed ES256 keypair under `resources/test-jwt-keys/` is what the
+ * - An ES256 keypair generated on the fly by [TestJwtKeypair] is what the
  *   backend uses to *issue* JWTs (via `IssueDeepLinkTokenAsync`) and to
  *   verify them on subsequent requests. The matching public PEM is the
  *   single entry in `OCTOCON_JWT_ES256_VERIFICATION_KEYS`. We never sign
  *   tokens client-side — `obtainTestToken` drives the auth-callback flow
- *   so the backend mints + records each JTI itself.
+ *   so the backend mints + records each JTI itself. The keypair is fresh
+ *   per test JVM; nothing about it is committed to the repo.
  * - The `OCTOCON_INMEMORY_SECRETS_SEED__*` env vars (added upstream and
  *   bug-fixed in the image pinned below) seed the runtime's `ISecretsStore`
  *   with `encryption:pepper`, the ES256 signing PEM, and the deep-link
@@ -37,19 +38,10 @@ class BackendContainer : GenericContainer<BackendContainer>(resolveImage()) {
     withEnv("ASPNETCORE_URLS", "http://+:8080")
     withEnv("OCTOCON_JWT_AUTHORITY", "octocon-test")
     withEnv("OCTOCON_AUTH_CALLBACK_BASE_URL", "http://localhost:8080")
-    withEnv(
-      "OCTOCON_JWT_ES256_PRIVATE_KEY_PEM",
-      readClasspathResource("test-jwt-keys/private.pem"),
-    )
-    withEnv(
-      "OCTOCON_JWT_ES256_VERIFICATION_KEYS",
-      readClasspathResource("test-jwt-keys/public.pem"),
-    )
+    withEnv("OCTOCON_JWT_ES256_PRIVATE_KEY_PEM", TestJwtKeypair.privatePem)
+    withEnv("OCTOCON_JWT_ES256_VERIFICATION_KEYS", TestJwtKeypair.publicPem)
     withEnv(BackendSeedEnvVars.ENCRYPTION_PEPPER, "TEST")
-    withEnv(
-      BackendSeedEnvVars.JWT_ES256_PRIVATE_PEM,
-      readClasspathResource("test-jwt-keys/private.pem"),
-    )
+    withEnv(BackendSeedEnvVars.JWT_ES256_PRIVATE_PEM, TestJwtKeypair.privatePem)
     withEnv(BackendSeedEnvVars.DEEP_LINK_SECRET, "TEST_DEEP_LINK_SECRET")
     withExposedPorts(8080)
     waitingFor(
@@ -115,10 +107,4 @@ private object BackendSeedEnvVars {
   const val ENCRYPTION_PEPPER = "OCTOCON_INMEMORY_SECRETS_SEED__ENCRYPTION_PEPPER"
   const val JWT_ES256_PRIVATE_PEM = "OCTOCON_INMEMORY_SECRETS_SEED__AUTH_JWT_ES256_PRIVATE_PEM"
   const val DEEP_LINK_SECRET = "OCTOCON_INMEMORY_SECRETS_SEED__AUTH_DEEP_LINK_SECRET"
-}
-
-private fun readClasspathResource(path: String): String {
-  val stream = BackendContainer::class.java.classLoader.getResourceAsStream(path)
-    ?: error("Classpath resource not found: $path")
-  return stream.bufferedReader().use { it.readText() }
 }
