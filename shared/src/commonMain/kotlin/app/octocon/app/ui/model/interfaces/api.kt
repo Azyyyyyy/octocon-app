@@ -5,11 +5,12 @@ import app.octocon.app.api.ChannelMessage
 import app.octocon.app.api.FriendRequests
 import app.octocon.app.api.KeyResponse
 import app.octocon.app.api.LinkTokenResponse
+import app.octocon.app.api.DefaultPhoenixSocketSessionFactory
 import app.octocon.app.api.PhoenixSocketSession
+import app.octocon.app.api.PhoenixSocketSessionFactory
 import app.octocon.app.api.SocketAdapterResponse
 import app.octocon.app.api.buildEndpointPayload
 import app.octocon.app.api.clusterFrontData
-import app.octocon.app.api.connectToPhoenixChannel
 import app.octocon.app.api.model.APIError
 import app.octocon.app.api.model.APIResponse
 import app.octocon.app.api.model.AlterJournalEntry
@@ -216,7 +217,8 @@ interface ApiInterface {
 internal class ApiInterfaceImpl(
   val coroutineScope: CoroutineScope,
   val platformUtilities: PlatformUtilities,
-  val settingsInterface: SettingsInterface
+  val settingsInterface: SettingsInterface,
+  private val socketSessionFactory: PhoenixSocketSessionFactory = DefaultPhoenixSocketSessionFactory,
 ) : ApiInterface, InstanceKeeper.Instance {
   /* --------------- STATE --------------- */
 
@@ -307,7 +309,7 @@ internal class ApiInterfaceImpl(
         withContext(ioDispatcher) {
           if (!_initComplete.value) {
             socketSession =
-              connectToPhoenixChannel(
+              socketSessionFactory.create(
                 token.value,
                 userID,
                 _eventFlow,
@@ -320,7 +322,7 @@ internal class ApiInterfaceImpl(
                   val response = globalSerializer.decodeFromString<SocketInitResponse>(json)
 
                   _systemMe.tryEmit(APIState.Success(response.system))
-                  if(response.batched) return@connectToPhoenixChannel
+                  if(response.batched) return@create
 
                   _alters.tryEmit(APIState.Success(response.alters!!))
                   _tags.tryEmit(APIState.Success(response.tags!!.sortedLocaleAware { it.name }))

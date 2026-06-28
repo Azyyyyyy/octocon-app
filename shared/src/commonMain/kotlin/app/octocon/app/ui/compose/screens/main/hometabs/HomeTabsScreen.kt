@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -69,10 +70,56 @@ import octoconapp.shared.resources.history
 import octoconapp.shared.resources.journal
 import octoconapp.shared.resources.menu
 
+/**
+ * Test-only [Modifier.testTag] identifiers for the [ShortNavigationBar] and
+ * [NavigationRail] containers rendered by this screen.
+ *
+ * These two tags exist purely so unit tests can disambiguate "the bottom
+ * bar is showing" from "the navigation rail is showing". They have no
+ * accessibility purpose — Material's bar/rail containers themselves are
+ * not announced by assistive tech (TalkBack, VoiceOver); only their child
+ * tab items are, and those are located via [androidx.compose.ui.semantics.Role.Tab]
+ * + the tab's visible label, not via test tags. See the four tab items in
+ * this file for the article-recommended approach
+ * (https://proandroiddev.com/stop-using-test-tags-in-the-jetpack-compose-production-code-b98e2679221f):
+ * we deliberately do NOT tag them, because their `Role.Tab` + text label
+ * + `selected` state already give tests and a11y tooling everything they
+ * need.
+ *
+ * The bars are the article's "inevitable" exception: Material exposes no
+ * distinguishing role or content description on the containers themselves,
+ * so the only signal that disambiguates them in a structural test is a tag
+ * applied here. If Material ever ships such a role, drop these too.
+ */
+object HomeTabsTestTags {
+  const val BOTTOM_BAR = "homeTabs.bottomBar"
+  const val NAVIGATION_RAIL = "homeTabs.navigationRail"
+}
+
+/**
+ * Production entry point for the home-tabs screen. Wraps [HomeTabsScreenContent]
+ * with the default child renderer so callers don't have to think about the
+ * test seam. The `internal` overload is what `commonTest` reaches for when it
+ * wants to compose the scaffold without wiring real tab screens.
+ */
+@Composable
+fun HomeTabsScreen(component: HomeTabsComponent) {
+  HomeTabsScreenContent(component) { DefaultHomeTabsChild(it) }
+}
+
+/**
+ * The actual screen body. Kept `internal` so production cannot accidentally
+ * override the child renderer (only one caller in the app —
+ * [app.octocon.app.ui.compose.screens.main.MainAppScreen] — and it uses the
+ * public [HomeTabsScreen]), while `commonTest` can still inject an empty
+ * renderer to exercise the scaffold without `AltersScreen` / `FrontHistoryScreen`
+ * / `JournalScreen` / `FriendsScreen` and their full state graphs.
+ */
 @OptIn(ExperimentalDecomposeApi::class)
 @Composable
-fun HomeTabsScreen(
-  component: HomeTabsComponent
+internal fun HomeTabsScreenContent(
+  component: HomeTabsComponent,
+  renderChild: @Composable (HomeTabsComponent.Child) -> Unit
 ) {
   /*val topAppBarState = rememberTopAppBarState()
   val scrollBehavior =
@@ -179,12 +226,7 @@ fun HomeTabsScreen(
           animation = stackAnimation(fade(tween(200))),
           modifier = Modifier.fillMaxSize()
         ) {
-          when (val child = it.instance) {
-            is HomeTabsComponent.Child.AltersChild -> AltersScreen(child.component)
-            is HomeTabsComponent.Child.FrontHistoryChild -> FrontHistoryScreen(child.component)
-            is HomeTabsComponent.Child.JournalChild -> JournalScreen(child.component)
-            is HomeTabsComponent.Child.FriendsChild -> FriendsScreen(child.component)
-          }
+          renderChild(it.instance)
         }
       }
     }
@@ -216,6 +258,16 @@ fun HomeTabsScreen(
 }
 
 @Composable
+private fun DefaultHomeTabsChild(child: HomeTabsComponent.Child) {
+  when (child) {
+    is HomeTabsComponent.Child.AltersChild -> AltersScreen(child.component)
+    is HomeTabsComponent.Child.FrontHistoryChild -> FrontHistoryScreen(child.component)
+    is HomeTabsComponent.Child.JournalChild -> JournalScreen(child.component)
+    is HomeTabsComponent.Child.FriendsChild -> FriendsScreen(child.component)
+  }
+}
+
+@Composable
 fun NavigationRail(
   settings: Settings,
   component: HomeTabsComponent,
@@ -235,7 +287,7 @@ fun NavigationRail(
     reduceMotion = settings.reduceMotion
   ) {
     NavigationRail(
-      modifier = modifier,
+      modifier = modifier.testTag(HomeTabsTestTags.NAVIGATION_RAIL),
       header = {
         IconButton(
           onClick = { toggleDrawer(true) }
@@ -306,7 +358,7 @@ fun BottomBar(
   ) {
     ShortNavigationBar(
       // windowInsets = WindowInsets.navigationBars,
-      modifier = modifier
+      modifier = modifier.testTag(HomeTabsTestTags.BOTTOM_BAR)
     ) {
       OctoconNavigationBarItem(
         Res.string.alters.compose,
