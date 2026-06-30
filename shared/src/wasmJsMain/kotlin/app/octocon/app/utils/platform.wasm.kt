@@ -195,10 +195,21 @@ val platformUtilities = object : PlatformUtilities {
 
         // Persist the encryption key in IndexedDB via the web shim and store
         // a placeholder in settings so callers know it's persisted off-localStorage.
-        try {
-            webStoreEncryptionKey(encryptionKey)
-        } catch (e: Exception) {
-            platformLog("SETTINGS", "Failed to persist encryption key to IndexedDB: $e")
+        val stored = webStoreEncryptionKey(encryptionKey)
+        if (!stored) {
+            // IDB write failed. Make sure we don't leave behind a localStorage flag
+            // claiming the key is stored when it isn't (that previously forced users
+            // to manually clear their IndexedDB to recover). Best-effort wipe any
+            // partial IDB state from a prior buggy run too.
+            try {
+                webDeleteEncryptionKey()
+            } catch (e: Throwable) {
+                platformLog("SETTINGS", "Best-effort cleanup of IndexedDB encryption key failed: $e")
+            }
+            if (currentSettings.encryptedEncryptionKey != null) {
+                saveSettings(currentSettings.copy(encryptedEncryptionKey = null))
+            }
+            return null
         }
 
         val updatedSettings = currentSettings.copy(encryptedEncryptionKey = "STORED_IN_INDEXEDDB")
@@ -213,7 +224,26 @@ val platformUtilities = object : PlatformUtilities {
         }
 
         val stored = webRetrieveEncryptionKey()
-        return stored?.trim() ?: throw IllegalStateException("Encryption key not found")
+        if (stored != null) return stored.trim()
+
+        // Self-heal: settings claim the key is in IndexedDB, but IDB has nothing.
+        // This was the broken state previously produced by the silent IDB write failure
+        // bug. Clear the stale flag (and any partial IDB residue) so the next setup
+        // attempt isn't blocked and the user doesn't have to manually clear their
+        // IndexedDB to recover.
+        if (keyFromSettings == "STORED_IN_INDEXEDDB") {
+            platformLog(
+                "SETTINGS",
+                "encryptedEncryptionKey was 'STORED_IN_INDEXEDDB' but IndexedDB had no key; clearing stale flag"
+            )
+            try {
+                webDeleteEncryptionKey()
+            } catch (e: Throwable) {
+                platformLog("SETTINGS", "Best-effort cleanup of IndexedDB encryption key failed: $e")
+            }
+            saveSettings(settings.copy(encryptedEncryptionKey = null))
+        }
+        throw IllegalStateException("Encryption key not found")
     }
 
     override fun decryptEncryptionKey(encryptedEncryptionKey: String): String {
