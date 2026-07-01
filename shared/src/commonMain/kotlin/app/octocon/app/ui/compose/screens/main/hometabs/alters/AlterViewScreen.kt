@@ -140,7 +140,7 @@ fun AlterViewScreen(
       },
       floatingActionButton = {
         AnimatedVisibility(
-          !DevicePlatform.isWasm && pages.selectedIndex == 2,
+          pages.selectedIndex == 2,
           enter = fadeIn(effectsSpec()),
           exit = fadeOut(effectsSpec())
         ) {
