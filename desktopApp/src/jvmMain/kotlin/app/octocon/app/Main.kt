@@ -110,7 +110,8 @@ fun main(args: Array<String>) {
     }
   }
 
-  // Restore persisted public key from Preferences if still within TTL
+  // Restore persisted public key from Preferences if still within TTL. Only prefetch a
+  // fresh copy when the user is logged in
   try {
     val storedPem = javaPreferences.get("PUBLIC_KEY_PEM", null)
     val storedAt = javaPreferences.getLong("PUBLIC_KEY_AT", 0L)
@@ -119,13 +120,15 @@ fun main(args: Array<String>) {
       runBlocking { PublicKeyProvider.setCachedKey(storedPem, storedAt) }
     }
 
-    GlobalScope.launch {
-      try {
-        val key = PublicKeyProvider.getPublicKey("${initialSettings.apiEndpoint}/api")
-        javaPreferences.put("PUBLIC_KEY_PEM", key)
-        javaPreferences.putLong("PUBLIC_KEY_AT", System.currentTimeMillis())
-      } catch (_: Exception) {
-        // ignore
+    if (initialSettings.token != null) {
+      GlobalScope.launch {
+        try {
+          val key = PublicKeyProvider.getPublicKey("${initialSettings.apiEndpoint}/api")
+          javaPreferences.put("PUBLIC_KEY_PEM", key)
+          javaPreferences.putLong("PUBLIC_KEY_AT", System.currentTimeMillis())
+        } catch (_: Exception) {
+          // ignore
+        }
       }
     }
   } catch (e: Exception) {

@@ -18,7 +18,6 @@ import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.state.updateAppWidgetState
-import kotlinx.coroutines.flow.MutableSharedFlow
 import app.octocon.app.AndroidAppWrapper
 import app.octocon.app.Settings
 import app.octocon.app.ui.model.RootComponentImpl
@@ -34,6 +33,7 @@ import app.octocon.glance.FrontWidgetWorker
 import app.octocon.util.createSharedPreferences
 import app.octocon.util.getSavedSettings
 import com.arkivanov.decompose.defaultComponentContext
+import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import com.nimbusds.jose.EncryptionMethod
 import com.nimbusds.jose.JWEAlgorithm
@@ -47,6 +47,7 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import app.octocon.app.utils.PublicKeyProvider
 import java.security.GeneralSecurityException
@@ -81,8 +82,6 @@ class MainActivity : AppCompatActivity() {
   private val settings: Settings
     get() = getSavedSettings(sharedPreferences)
 
-  private val platformEventFlow = MutableSharedFlow<PlatformEvent>(replay = 3)
-
   @OptIn(DelicateCoroutinesApi::class)
   private val platformUtilities = object : PlatformUtilities {
     override fun exitApplication(exitApplicationType: ExitApplicationType) {
@@ -97,6 +96,50 @@ class MainActivity : AppCompatActivity() {
       this@MainActivity.saveSettings(settings)
     }
 
+    override fun clearServerConfigCache() {
+      try {
+        sharedPreferences.edit(commit = true) {
+          remove(PREF_PUBLIC_KEY)
+          remove(PREF_PUBLIC_KEY_AT)
+        }
+      } catch (e: Exception) {
+        Log.e("OCTOCON", "Failed to clear persisted public key: $e")
+      }
+      FirebaseInitializer.clearOnDisk(context)
+    }
+
+    override suspend fun reinitPushNotifications(settings: Settings) {
+      withContext(Dispatchers.Main) {
+        try {
+          if (FirebaseApp.getApps(context).isNotEmpty()) {
+            FirebaseApp.getInstance().delete()
+          }
+        } catch (e: Exception) {
+          Log.w("OCTOCON", "FirebaseApp.delete failed (ignoring): $e")
+        }
+
+        val initialized = FirebaseInitializer.fetchPersistAndInitialize(
+          context,
+          "${settings.apiEndpoint}/api"
+        )
+        if (!initialized) {
+          Log.w("OCTOCON", "Reinit: FirebaseApp not re-initialised; skipping token fetch")
+          return@withContext
+        }
+
+        if (!settings.showPushNotifications) return@withContext
+
+        try {
+          withTimeout(10_000L) {
+            val token = FirebaseMessaging.getInstance().token.await()
+            PlatformEventBus.flow.emit(PlatformEvent.PushNotificationTokenReceived(token))
+          }
+        } catch (e: Exception) {
+          Log.e("OCTOCON", "Reinit token fetch failed: $e")
+        }
+      }
+    }
+
     override fun showAlert(message: String) {
       Toast.makeText(this.context, message, Toast.LENGTH_SHORT).show()
     }
@@ -105,7 +148,7 @@ class MainActivity : AppCompatActivity() {
       get() = this@MainActivity
 
     override suspend fun recoveryCodeToJWE(recoveryCode: String, settings: Settings): String {
-      val publicKeyRaw = getPublicKey()
+      val publicKeyRaw = PublicKeyProvider.getPublicKey("${settings.apiEndpoint}/api")
       val publicKeyPEM = publicKeyRaw
         .replace(Regex("-----BEGIN.*?-----"), "")
         .replace(Regex("-----END.*?-----"), "")
@@ -229,10 +272,6 @@ class MainActivity : AppCompatActivity() {
       }
     }
 
-    override fun getPublicKey(): String {
-      return PublicKeyProvider.currentCachedKey() ?: throw IllegalStateException("Public key has not been loaded yet")
-    }
-
     override fun openURL(
       url: String,
       colorSchemeParams: ColorSchemeParams,
@@ -310,28 +349,45 @@ class MainActivity : AppCompatActivity() {
       Log.e("OCTOCON", "Failed to restore stored public key: $e")
     }
 
-    // Asynchronously ensure we have a fresh public key and persist it for future runs
-    GlobalScope.launch {
-      try {
-        val key = PublicKeyProvider.getPublicKey("${settings.apiEndpoint}/api")
-        val fetchedAt = System.currentTimeMillis()
-        sharedPreferences.edit(commit = true) {
-          putString(PREF_PUBLIC_KEY, key)
-          putLong(PREF_PUBLIC_KEY_AT, fetchedAt)
+    // Only prefetch server-hosted config when we know the endpoint is finalised
+    val isLoggedIn = settings.token != null
+
+    if (isLoggedIn) {
+      // Asynchronously ensure we have a fresh public key and persist it for future runs
+      GlobalScope.launch {
+        try {
+          val key = PublicKeyProvider.getPublicKey("${settings.apiEndpoint}/api")
+          val fetchedAt = System.currentTimeMillis()
+          sharedPreferences.edit(commit = true) {
+            putString(PREF_PUBLIC_KEY, key)
+            putLong(PREF_PUBLIC_KEY_AT, fetchedAt)
+          }
+        } catch (e: Exception) {
+          Log.e("OCTOCON", "Failed to preload public key: $e")
         }
-      } catch (e: Exception) {
-        Log.e("OCTOCON", "Failed to preload public key: $e")
       }
     }
 
-    GlobalScope.launch {
-      try {
-        withTimeout(10_000L) {
-          val token = FirebaseMessaging.getInstance().token.await()
-          platformEventFlow.emit(PlatformEvent.PushNotificationTokenReceived(token))
+    FirebaseInitializer.ensureInitialized(context)
+
+    if (isLoggedIn) {
+      GlobalScope.launch {
+        val initialized = FirebaseInitializer.fetchPersistAndInitialize(
+          context,
+          "${settings.apiEndpoint}/api"
+        )
+        if (!initialized) {
+          Log.w("OCTOCON", "Firebase not initialised (no cached config yet); skipping token fetch")
+          return@launch
         }
-      } catch (e: Exception) {
-        Log.e("OCTOCON", "Failed to get Firebase token: $e")
+        try {
+          withTimeout(10_000L) {
+            val token = FirebaseMessaging.getInstance().token.await()
+            PlatformEventBus.flow.emit(PlatformEvent.PushNotificationTokenReceived(token))
+          }
+        } catch (e: Exception) {
+          Log.e("OCTOCON", "Failed to get Firebase token: $e")
+        }
       }
     }
 
@@ -340,7 +396,7 @@ class MainActivity : AppCompatActivity() {
       coroutineContext = Dispatchers.Main.immediate,
       initialSettings = initialSettings,
       platformUtilities = platformUtilities,
-      platformEventFlow = platformEventFlow
+      platformEventFlow = PlatformEventBus.flow
     )
 
     setContent {
@@ -380,19 +436,19 @@ class MainActivity : AppCompatActivity() {
 
       "/link_success/discord", "/deep/link_success/discord" -> {
         platformLog("/deep/link_success/discord hit!")
-        platformEventFlow.tryEmit(PlatformEvent.ExternallyHandleable.DiscordAccountLinked)
+        PlatformEventBus.flow.tryEmit(PlatformEvent.ExternallyHandleable.DiscordAccountLinked)
         settings
       }
 
       "/link_success/google", "/deep/link_success/google" -> {
         platformLog("/deep/link_success/google hit!")
-        platformEventFlow.tryEmit(PlatformEvent.ExternallyHandleable.GoogleAccountLinked)
+        PlatformEventBus.flow.tryEmit(PlatformEvent.ExternallyHandleable.GoogleAccountLinked)
         settings
       }
 
       "/link_success/apple", "/deep/link_success/apple" -> {
         platformLog("/deep/link_success/apple hit!")
-        platformEventFlow.tryEmit(PlatformEvent.ExternallyHandleable.AppleAccountLinked)
+        PlatformEventBus.flow.tryEmit(PlatformEvent.ExternallyHandleable.AppleAccountLinked)
         settings
       }
 

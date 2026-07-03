@@ -7,7 +7,6 @@ plugins {
   // id("io.sentry.android.gradle").version("4.5.1")
   id("org.jetbrains.compose")
   id("org.jetbrains.kotlin.plugin.compose")
-  id("com.google.gms.google-services")
   id("kotlin-parcelize")
 }
 

@@ -252,7 +252,7 @@ fun SettingsRootScreen(
             { SettingsSingletMode(if(isSinglet) CardGroupPosition.SINGLE else CardGroupPosition.END, settings) }
           )
 
-          if(DevicePlatform.isMobile) {
+          if(DevicePlatform.hasPushNotifications) {
             SettingsSection(
               notifications,
               settingsData,

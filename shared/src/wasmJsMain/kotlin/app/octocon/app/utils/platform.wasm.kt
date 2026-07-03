@@ -2,6 +2,7 @@
 
 package app.octocon.app.utils
 
+import app.octocon.PlatformEventBus
 import app.octocon.app.Settings
 import app.octocon.app.utils.bindings.CompactEncrypt
 import app.octocon.app.utils.bindings.CryptoKey
@@ -15,6 +16,7 @@ import org.khronos.webgl.set
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.js.ExperimentalWasmJsInterop
+import kotlin.js.Promise
 
 actual val currentPlatform = DevicePlatform.Wasm
 
@@ -55,6 +57,31 @@ private external fun aesDecryptUsages(): JsArray<JsString>
 @JsFun("(url) => { if ('serviceWorker' in navigator) { navigator.serviceWorker.register(url).then(reg => console.log('Service worker registered:', reg)).catch(err => console.warn('Service worker registration failed:', err)); } }")
 private external fun registerServiceWorker(url: String)
 
+/**
+ * Delete the service worker's Cache Storage entry that holds the fetched Firebase
+ * config. Fire-and-forget: the delete returns a Promise which we intentionally do not
+ * await — the main-thread `localStorage` clear beside this call is what the app
+ * actually depends on. The Cache Storage entry is a defensive nicety so background
+ * push handlers don't fall back to a stale config from the previous server.
+ */
+@JsFun("() => { if ('caches' in self) { caches.delete('octocon-firebase-config-v1').catch(err => console.warn('Failed to delete Firebase config cache:', err)); } }")
+private external fun deleteServiceWorkerFirebaseConfigCache()
+
+/**
+ * Delete the current Firebase JS SDK app instance if one has been initialised in this
+ * page's runtime. Returns a Promise that resolves to `null` (either because the delete
+ * succeeded or because there was nothing to delete). Used by
+ * [PlatformUtilities.reinitPushNotifications] before it re-initialises against the new
+ * endpoint's config.
+ */
+@JsFun(
+  "() => { " +
+    "if (typeof firebase === 'undefined' || !firebase.apps || firebase.apps.length === 0) return Promise.resolve(null); " +
+    "return firebase.app().delete().catch(err => { console.warn('firebase.app().delete() failed:', err); return null; }); " +
+    "}"
+)
+private external fun deleteFirebaseJsAppIfPresent(): Promise<JsAny?>
+
 @JsFun("() => { if ('serviceWorker' in navigator) { navigator.serviceWorker.getRegistrations().then(registrations => { for (let registration of registrations) { registration.unregister(); } }); } }")
 private external fun unregisterServiceWorkers()
 
@@ -93,7 +120,10 @@ val platformUtilities = object : PlatformUtilities {
                 updateServiceWorkerRegistration(true)
             }
         } else {
-            updateServiceWorkerRegistration(settings.installServiceWorker)
+            // Register the SW if either offline caching is enabled OR push
+            // notifications are on — FCM's getToken hands us the same SW so we
+            // reuse a single registration for both purposes.
+            updateServiceWorkerRegistration(settings.installServiceWorker || settings.showPushNotifications)
         }
     }
 
@@ -111,9 +141,37 @@ val platformUtilities = object : PlatformUtilities {
         val oldSettings = getSettings()
         localStorage.setItem(SETTINGS_LOCALSTORAGE_KEY, settings.serialize())
 
-        if (settings.installServiceWorker != (oldSettings?.installServiceWorker ?: false)) {
-            updateServiceWorkerRegistration(settings.installServiceWorker)
+        val swNeededNow = settings.installServiceWorker || settings.showPushNotifications
+        val swNeededBefore = (oldSettings?.installServiceWorker ?: false) ||
+            (oldSettings?.showPushNotifications ?: false)
+        if (swNeededNow != swNeededBefore) {
+            updateServiceWorkerRegistration(swNeededNow)
         }
+    }
+
+    override fun clearServerConfigCache() {
+        localStorage.removeItem("PUBLIC_KEY_PEM")
+        localStorage.removeItem("PUBLIC_KEY_AT")
+        localStorage.removeItem("FIREBASE_CONFIG_JSON")
+        localStorage.removeItem("FIREBASE_CONFIG_AT")
+        deleteServiceWorkerFirebaseConfigCache()
+    }
+
+    override suspend fun reinitPushNotifications(settings: Settings) {
+        // In practice on wasm this hook rarely fires — the OAuth flow is a full page
+        // reload, so the token appears in `initialSettings` at boot rather than
+        // through `SettingsInterfaceImpl.setToken` at runtime. Kept for the
+        // hypothetical same-page login flow and for symmetry with Android/iOS.
+        try {
+            deleteFirebaseJsAppIfPresent().await<JsAny?>()
+        } catch (e: Throwable) {
+            platformLog("PUSH", "Reinit: firebase.app().delete() failed (ignoring): $e")
+        }
+
+        if (!settings.showPushNotifications) return
+
+        val token = tryRefreshWebFCMToken("${settings.apiEndpoint}/api") ?: return
+        PlatformEventBus.flow.emit(PlatformEvent.PushNotificationTokenReceived(token))
     }
 
     fun updateServiceWorkerRegistration(enabled: Boolean) {
@@ -327,11 +385,6 @@ val platformUtilities = object : PlatformUtilities {
             platformLog("CRYPTO", "Failed to decrypt data: $e")
             throw IllegalStateException("Failed to decrypt data", e)
         }
-    }
-
-    override fun getPublicKey(): String {
-        return PublicKeyProvider.currentCachedKey()
-            ?: throw IllegalStateException("Public key has not been loaded yet")
     }
 
     override fun openURL(

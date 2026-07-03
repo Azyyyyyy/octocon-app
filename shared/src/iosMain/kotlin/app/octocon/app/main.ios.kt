@@ -5,8 +5,12 @@ import androidx.compose.ui.uikit.OnFocusBehavior
 import androidx.compose.ui.window.ComposeUIViewController
 import app.octocon.app.ui.compose.screens.RootScreen
 import app.octocon.app.ui.model.RootComponent
+import app.octocon.app.utils.FirebaseConfig
+import app.octocon.app.utils.FirebaseConfigProvider
+import app.octocon.app.utils.FirebasePlatform
 import app.octocon.app.utils.PlatformDelegate
 import app.octocon.app.utils.PlatformEvent
+import app.octocon.app.utils.globalSerializer
 import app.octocon.app.utils.platformLog
 import app.octocon.app.utils.platformUtilities
 import app.octocon.app.utils.sfSafariViewController
@@ -55,6 +59,9 @@ fun MainViewController(platformDelegate: PlatformDelegate, root: RootComponent, 
 
   val settings = getSettingsFromKeychain()
 
+  // Only prefetch server-hosted config when the user is logged in
+  val isLoggedIn = settings.token != null
+
   // Restore persisted public key (if within TTL) and asynchronously refresh
   try {
     getStoredPublicKey()?.let { (pem, at) ->
@@ -64,16 +71,51 @@ fun MainViewController(platformDelegate: PlatformDelegate, root: RootComponent, 
       }
     }
 
-    GlobalScope.launch {
-      try {
-        val key = app.octocon.app.utils.PublicKeyProvider.getPublicKey("${settings.apiEndpoint}/api")
-        saveStoredPublicKey(key, Clock.System.now().toEpochMilliseconds())
-      } catch (e: Exception) {
-        NSLog("Failed to preload public key: $e")
+    if (isLoggedIn) {
+      GlobalScope.launch {
+        try {
+          val key = app.octocon.app.utils.PublicKeyProvider.getPublicKey("${settings.apiEndpoint}/api")
+          saveStoredPublicKey(key, Clock.System.now().toEpochMilliseconds())
+        } catch (e: Exception) {
+          NSLog("Failed to preload public key: $e")
+        }
       }
     }
   } catch (e: Exception) {
     NSLog("Public key persistence restore failed: $e")
+  }
+
+  // Restore persisted Firebase config (if within TTL) and asynchronously refresh
+  try {
+    getStoredFirebaseConfig()?.let { (json, at) ->
+      val now = Clock.System.now().toEpochMilliseconds()
+      if (now - at < FirebaseConfigProvider.TTL_MS) {
+        try {
+          val restored: FirebaseConfig.IOS = globalSerializer.decodeFromString(json)
+          runBlocking {
+            FirebaseConfigProvider.setCachedConfig(restored, FirebasePlatform.IOS, at)
+          }
+        } catch (e: Exception) {
+          NSLog("Failed to decode stored Firebase config: $e")
+        }
+      }
+    }
+
+    if (isLoggedIn) {
+      GlobalScope.launch {
+        try {
+          val config = FirebaseConfigProvider.getConfig(FirebasePlatform.IOS, "${settings.apiEndpoint}/api")
+          if (config is FirebaseConfig.IOS) {
+            val json = globalSerializer.encodeToString(config)
+            saveStoredFirebaseConfig(json, Clock.System.now().toEpochMilliseconds())
+          }
+        } catch (e: Exception) {
+          NSLog("Failed to preload Firebase config: $e")
+        }
+      }
+    }
+  } catch (e: Exception) {
+    NSLog("Firebase config persistence restore failed: $e")
   }
 
   platformUtilities.injectPlatformDelegate(platformDelegate)
@@ -107,6 +149,78 @@ fun providePushNotificationToken(token: String?) {
       }
     }
   }
+}
+
+/**
+ * Swift-callable bridge that materialises the server-hosted iOS Firebase configuration
+ * (fetching from the API or falling back to the on-disk cache in the Keychain). Called
+ * from `AppDelegate.application(_:didFinishLaunchingWithOptions:)` before
+ * `FirebaseApp.configure(options:)`.
+ *
+ * Runs before `MainViewController` has done its own Keychain restore, so we seed the
+ * in-memory cache from KVault here first. When the user is logged out we skip the
+ * network fetch entirely — before login the endpoint may not be finalised, and fetching
+ * from the default endpoint would cache config for the wrong server.
+ *
+ * Returns `null` if we have no cached config and can't (or won't) fetch — the Swift
+ * side should then skip `FirebaseApp.configure` and log; push simply won't work until
+ * the next launch after the user logs in.
+ */
+@Suppress("unused") // Used in Swift
+suspend fun awaitFirebaseOptionsForIOS(): FirebaseIOSOptionsBridge? {
+  if (FirebaseConfigProvider.currentCachedConfig() == null) {
+    try {
+      getStoredFirebaseConfig()?.let { (json, at) ->
+        val now = Clock.System.now().toEpochMilliseconds()
+        if (now - at < FirebaseConfigProvider.TTL_MS) {
+          val restored: FirebaseConfig.IOS = globalSerializer.decodeFromString(json)
+          FirebaseConfigProvider.setCachedConfig(restored, FirebasePlatform.IOS, at)
+        }
+      }
+    } catch (e: Exception) {
+      NSLog("awaitFirebaseOptionsForIOS: cache restore failed: $e")
+    }
+  }
+
+  val settings = getSettingsFromKeychain()
+  val cached = FirebaseConfigProvider.currentCachedConfig() as? FirebaseConfig.IOS
+
+  if (settings.token == null) {
+    return cached?.let(::FirebaseIOSOptionsBridge)
+  }
+
+  return try {
+    val config = FirebaseConfigProvider.getConfig(FirebasePlatform.IOS, "${settings.apiEndpoint}/api")
+    (config as? FirebaseConfig.IOS)?.let(::FirebaseIOSOptionsBridge)
+  } catch (e: Exception) {
+    NSLog("awaitFirebaseOptionsForIOS failed: $e")
+    cached?.let(::FirebaseIOSOptionsBridge)
+  }
+}
+
+/**
+ * Plain data holder for the seven fields that iOS `FIROptions` needs. Kept as a
+ * separate class (rather than exposing [FirebaseConfig.IOS] directly) so Swift doesn't
+ * have to know about the sealed hierarchy or Kotlin serialization annotations.
+ */
+data class FirebaseIOSOptionsBridge(
+  val apiKey: String,
+  val googleAppId: String,
+  val gcmSenderId: String,
+  val projectId: String,
+  val storageBucket: String?,
+  val bundleId: String,
+  val clientId: String?
+) {
+  constructor(config: FirebaseConfig.IOS) : this(
+    apiKey = config.apiKey,
+    googleAppId = config.googleAppId,
+    gcmSenderId = config.gcmSenderId,
+    projectId = config.projectId,
+    storageBucket = config.storageBucket,
+    bundleId = config.bundleId,
+    clientId = config.clientId
+  )
 }
 
 fun handleDeepLink(latestDeepLink: String?) {

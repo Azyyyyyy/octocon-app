@@ -2,9 +2,14 @@ import Foundation
 import CryptoKit
 import JOSESwift
 import WidgetKit
+import UIKit
+
+import FirebaseCore
+import FirebaseMessaging
 
 import class shared.Platform_iosKt
 import protocol shared.PlatformDelegate
+import class shared.FirebaseIOSOptionsBridge
 
 class Throttler {
   private var workItem: DispatchWorkItem?
@@ -102,6 +107,55 @@ class SwiftPlatformDelegate : PlatformDelegate {
     }
   }
   
+  func reconfigureFirebase(bridge: FirebaseIOSOptionsBridge) {
+    // Kotlin side has already persisted the fresh config to KVault; our job here is
+    // to swap out the live FirebaseApp singleton so this session's `Messaging.messaging()`
+    // is bound to the correct project. Runs on the main thread because FirebaseCore
+    // touches UIApplication under the hood.
+    let options = FirebaseOptions(googleAppID: bridge.googleAppId, gcmSenderID: bridge.gcmSenderId)
+    options.apiKey = bridge.apiKey
+    options.projectID = bridge.projectId
+    options.bundleID = bridge.bundleId
+    if let storageBucket = bridge.storageBucket {
+      options.storageBucket = storageBucket
+    }
+    if let clientId = bridge.clientId {
+      options.clientID = clientId
+    }
+
+    Task { @MainActor in
+      // Async delete has to complete before we configure a new instance, otherwise
+      // FirebaseApp.configure(options:) may race with the teardown and end up with
+      // Messaging.messaging() referencing a dangling app.
+      if let currentApp = FirebaseApp.app() {
+        let succeeded = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+          currentApp.delete { success in
+            continuation.resume(returning: success)
+          }
+        }
+        if !succeeded {
+          NSLog("reconfigureFirebase: FirebaseApp.delete returned false (continuing anyway)")
+        }
+      }
+
+      FirebaseApp.configure(options: options)
+
+      // FirebaseApp.delete() clears Messaging.messaging()'s delegate; re-attach so
+      // MessagingDelegate.messaging(_:didReceiveRegistrationToken:) fires with the
+      // freshly-minted token from the new project and flows back into Kotlin via
+      // providePushNotificationToken.
+      if let appDelegate = UIApplication.shared.delegate as? MessagingDelegate {
+        Messaging.messaging().delegate = appDelegate
+      } else {
+        NSLog("reconfigureFirebase: AppDelegate is not a MessagingDelegate; token won't flow back")
+      }
+
+      // Force iOS to hand APNs back to Firebase, which kicks off a fresh FCM token
+      // acquisition against the newly-configured project.
+      UIApplication.shared.registerForRemoteNotifications()
+    }
+  }
+
   private func publicKeyFromString(_ keyString: String) -> SecKey {
     // Robustly strip any PEM headers/footers using regex
     let pattern = "-----BEGIN.*?-----|-----END.*?-----"

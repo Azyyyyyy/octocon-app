@@ -4,6 +4,7 @@ import app.octocon.app.api.fetchPublicKey
 import app.octocon.app.Settings
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import kotlin.time.Clock
 
 object PublicKeyProvider {
@@ -14,6 +15,9 @@ object PublicKeyProvider {
   // default TTL 28 days
   const val TTL_MS: Long = 24 * 28 * 60 * 60 * 1000
 
+  /** Hard ceiling on any single fetch, so a hung socket can't leak a coroutine. */
+  const val NETWORK_TIMEOUT_MS: Long = 15_000L
+
   suspend fun getPublicKey(endpoint: String = Settings.DEFAULT_API_ENDPOINT + "/api"): String {
     mutex.withLock {
       val now = Clock.System.now().toEpochMilliseconds()
@@ -22,7 +26,7 @@ object PublicKeyProvider {
       }
 
       try {
-        val response = fetchPublicKey(endpoint)
+        val response = withTimeout(NETWORK_TIMEOUT_MS) { fetchPublicKey(endpoint) }
         if (response.data != null && response.data.isNotBlank()) {
           cachedKey = response.data
           cachedAt = now
@@ -36,9 +40,6 @@ object PublicKeyProvider {
       }
     }
   }
-
-  /** Non-suspending accessor for the currently cached public key (may be null). */
-  fun currentCachedKey(): String? = cachedKey
 
   fun clearCache() {
     cachedKey = null

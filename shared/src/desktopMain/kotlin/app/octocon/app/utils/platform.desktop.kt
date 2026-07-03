@@ -33,6 +33,15 @@ val platformUtilities = object : PlatformUtilities {
     javaPreferences.put(SETTINGS_KEY, globalSerializer.encodeToString(settings))
   }
 
+  override fun clearServerConfigCache() {
+    try {
+      javaPreferences.remove("PUBLIC_KEY_PEM")
+      javaPreferences.remove("PUBLIC_KEY_AT")
+    } catch (e: Exception) {
+      println("Failed to clear persisted public key: $e")
+    }
+  }
+
   @Suppress("EmptyMethod")
   override fun showAlert(message: String) {
     // TODO: Implement desktop alerts (could use JOptionPane or system notifications)
@@ -177,10 +186,6 @@ val platformUtilities = object : PlatformUtilities {
     } catch (e: java.security.GeneralSecurityException) {
       throw IllegalStateException("Failed to decrypt data", e)
     }
-  }
-
-  override fun getPublicKey(): String {
-    return PublicKeyProvider.currentCachedKey() ?: throw IllegalStateException("Public key has not been loaded yet")
   }
 
   override fun openURL(
