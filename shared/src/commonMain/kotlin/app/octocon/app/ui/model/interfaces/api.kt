@@ -363,8 +363,6 @@ internal class ApiInterfaceImpl(
     onFailure: (error: String) -> Unit
   ) {
     coroutineScope.launch(Dispatchers.Default) {
-      // val publicKeyPEM = platformUtilities.getPublicKey()
-
       sendAPIRequest<KeyResponse>(
         Post,
         "settings/setup-encryption",

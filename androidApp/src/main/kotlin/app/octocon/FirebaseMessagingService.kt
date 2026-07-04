@@ -10,14 +10,27 @@ import android.media.RingtoneManager
 import android.net.Uri
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import app.octocon.app.api.updatePushNotificationToken
+import app.octocon.app.utils.PlatformEvent
 import app.octocon.app.utils.ioDispatcher
+import app.octocon.util.createSharedPreferences
+import app.octocon.util.getSavedSettings
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.net.URL
 
 class OctoconFirebaseMessagingService : FirebaseMessagingService() {
+  override fun onCreate() {
+    // The Google Services Gradle plugin used to auto-init Firebase before the service
+    // was ever instantiated. Now that we init from a server-hosted config we have to
+    // do it ourselves before the base class touches FirebaseApp.getInstance().
+    FirebaseInitializer.ensureInitialized(applicationContext)
+    super.onCreate()
+  }
+
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
     // TODO(developer): Handle FCM messages here.
     Log.d(TAG, "From: ${remoteMessage.from}")
@@ -41,6 +54,30 @@ class OctoconFirebaseMessagingService : FirebaseMessagingService() {
    */
   override fun onNewToken(token: String) {
     Log.d(TAG, "Refreshed token: $token")
+
+    // Primary path: if MainActivity is alive, its RootScreen collector runs the same
+    // tryInitPushNotifications pipeline as the cold-start token fetch. If MainActivity
+    // isn't alive right now but the process is, the replay buffer holds the event
+    // until it wakes up.
+    PlatformEventBus.flow.tryEmit(PlatformEvent.PushNotificationTokenReceived(token))
+
+    // Fallback path: if the OS woke us with the whole process cold and MainActivity
+    // never comes up during this service lifetime, hit the server directly so the
+    // user doesn't silently stop receiving pushes.
+    runBlocking {
+      try {
+        withTimeout(9_000L) {
+          val settings = getSavedSettings(createSharedPreferences(applicationContext))
+          val authToken = settings.token
+          if (authToken == null || settings.tokenIsProtected || !settings.showPushNotifications) {
+            return@withTimeout
+          }
+          updatePushNotificationToken("${settings.apiEndpoint}/api", authToken, token)
+        }
+      } catch (e: Exception) {
+        Log.w(TAG, "onNewToken direct POST failed: $e")
+      }
+    }
   }
 
   private fun sendNotification(title: String, body: String, imageURL: Uri?) {

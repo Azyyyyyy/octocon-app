@@ -600,6 +600,15 @@ suspend fun invalidatePushNotificationToken(endpoint: String, token: String, pus
 suspend fun fetchPublicKey(endpoint: String): APIResponse<String> =
   get(endpoint, null, "settings/public-key").body<APIResponse<String>>()
 
+suspend fun fetchAndroidFirebaseConfig(endpoint: String): APIResponse<app.octocon.app.utils.FirebaseConfig.Android> =
+  get(endpoint, null, "settings/firebase-config?platform=android").body<APIResponse<app.octocon.app.utils.FirebaseConfig.Android>>()
+
+suspend fun fetchIOSFirebaseConfig(endpoint: String): APIResponse<app.octocon.app.utils.FirebaseConfig.IOS> =
+  get(endpoint, null, "settings/firebase-config?platform=ios").body<APIResponse<app.octocon.app.utils.FirebaseConfig.IOS>>()
+
+suspend fun fetchWebFirebaseConfig(endpoint: String): APIResponse<app.octocon.app.utils.FirebaseConfig.Web> =
+  get(endpoint, null, "settings/firebase-config?platform=web").body<APIResponse<app.octocon.app.utils.FirebaseConfig.Web>>()
+
 suspend fun checkHealthLive(endpoint: String): Boolean =
   try {
     get(endpoint, null, "health/live").status.isSuccess()

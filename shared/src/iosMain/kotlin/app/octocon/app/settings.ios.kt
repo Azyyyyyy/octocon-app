@@ -31,3 +31,24 @@ fun saveStoredPublicKey(key: String, atMillis: Long) {
   vault.set("public_key", key)
   vault.set("public_key_at", atMillis.toString())
 }
+
+fun getStoredFirebaseConfig(): Pair<String, Long>? {
+  val json = vault.string("firebase_config") ?: return null
+  val at = vault.string("firebase_config_at")?.toLongOrNull() ?: return null
+  return json to at
+}
+
+fun saveStoredFirebaseConfig(json: String, atMillis: Long) {
+  vault.set("firebase_config", json)
+  vault.set("firebase_config_at", atMillis.toString())
+}
+
+fun clearStoredPublicKey() {
+  vault.deleteObject("public_key")
+  vault.deleteObject("public_key_at")
+}
+
+fun clearStoredFirebaseConfig() {
+  vault.deleteObject("firebase_config")
+  vault.deleteObject("firebase_config_at")
+}

@@ -37,6 +37,7 @@ kotlin {
         implementation("org.jetbrains.compose.foundation:foundation:$composeVersion")
 
         implementation("org.jetbrains.kotlinx:kotlinx-browser-wasm-js:0.5.0")
+        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
       }
     }
   }

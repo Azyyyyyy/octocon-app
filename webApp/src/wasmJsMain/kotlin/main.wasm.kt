@@ -1,11 +1,17 @@
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.window.ComposeViewport
+import app.octocon.PlatformEventBus
 import app.octocon.app.Settings
 import app.octocon.app.ui.compose.screens.RootScreen
 import app.octocon.app.ui.model.RootComponentImpl
+import app.octocon.app.utils.FirebaseConfig
+import app.octocon.app.utils.FirebaseConfigProvider
+import app.octocon.app.utils.FirebasePlatform
 import app.octocon.app.utils.PlatformEvent
 import app.octocon.app.utils.SETTINGS_LOCALSTORAGE_KEY
+import app.octocon.app.utils.globalSerializer
 import app.octocon.app.utils.platformUtilities
+import app.octocon.app.utils.tryRefreshWebFCMToken
 import com.arkivanov.decompose.DefaultComponentContext
 import com.arkivanov.essenty.lifecycle.LifecycleRegistry
 import com.arkivanov.essenty.lifecycle.resume
@@ -17,7 +23,6 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import app.octocon.app.utils.PublicKeyProvider
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableSharedFlow
 import org.w3c.dom.Document
 import org.w3c.dom.url.URLSearchParams
 import kotlin.time.Clock
@@ -25,7 +30,10 @@ import kotlin.time.Clock
 @OptIn(ExperimentalComposeUiApi::class, kotlinx.coroutines.DelicateCoroutinesApi::class)
 fun main() {
   val lifecycle = LifecycleRegistry()
-  val platformEventFlow = MutableSharedFlow<PlatformEvent>(replay = 3)
+  // Shared with `platform.wasm.kt` so the reinit path fired from
+  // `SettingsInterfaceImpl.setToken` on login completion can emit into the same
+  // flow this component's collector consumes.
+  val platformEventFlow = PlatformEventBus.flow
 
   val token = tryGetToken()
 
@@ -34,6 +42,9 @@ fun main() {
   var initialSettings = localStorage.getItem(SETTINGS_LOCALSTORAGE_KEY)?.let {
     Settings.deserialize(it)
   } ?: Settings()
+
+  // Only prefetch server-hosted config when the user is logged in
+  val isLoggedIn = initialSettings.token != null
 
   // Restore persisted public key from localStorage if within TTL and asynchronously refresh
   try {
@@ -46,7 +57,7 @@ fun main() {
         var pemToCache = initialStoredPem
         var atToCache = initialStoredAt
 
-        if (pemToCache == null || (now - atToCache) >= PublicKeyProvider.TTL_MS) {
+        if (isLoggedIn && (pemToCache == null || (now - atToCache) >= PublicKeyProvider.TTL_MS)) {
           try {
             val freshKey = PublicKeyProvider.getPublicKey("${initialSettings.apiEndpoint}/api")
             pemToCache = freshKey
@@ -69,11 +80,73 @@ fun main() {
     consoleLog("Failed to initiate public key restoration: $e")
   }
 
+  // Restore persisted Firebase web config from localStorage if within TTL and asynchronously refresh
+  try {
+    val initialStoredConfig = localStorage.getItem("FIREBASE_CONFIG_JSON")
+    val initialStoredAt = localStorage.getItem("FIREBASE_CONFIG_AT")?.toLongOrNull() ?: 0L
+    val now = Clock.System.now().toEpochMilliseconds()
+
+    GlobalScope.launch {
+      try {
+        var configJsonToCache = initialStoredConfig
+        var atToCache = initialStoredAt
+
+        if (isLoggedIn && (configJsonToCache == null || (now - atToCache) >= FirebaseConfigProvider.TTL_MS)) {
+          try {
+            val fresh = FirebaseConfigProvider.getConfig(
+              FirebasePlatform.WEB,
+              "${initialSettings.apiEndpoint}/api"
+            )
+            if (fresh is FirebaseConfig.Web) {
+              val json = globalSerializer.encodeToString(fresh)
+              configJsonToCache = json
+              atToCache = now
+              localStorage.setItem("FIREBASE_CONFIG_JSON", json)
+              localStorage.setItem("FIREBASE_CONFIG_AT", now.toString())
+            }
+          } catch (e: Exception) {
+            consoleLog("Failed to refresh Firebase config: ${e.message ?: e.toString()}")
+          }
+        }
+
+        configJsonToCache?.let { json ->
+          try {
+            val restored: FirebaseConfig.Web = globalSerializer.decodeFromString(json)
+            FirebaseConfigProvider.setCachedConfig(restored, FirebasePlatform.WEB, atToCache)
+          } catch (e: Exception) {
+            consoleLog("Failed to decode cached Firebase config: ${e.message ?: e.toString()}")
+          }
+        }
+      } catch (e: Exception) {
+        consoleLog("Error in startup Firebase config coroutine: ${e.message ?: e.toString()}")
+      }
+    }
+  } catch (e: Exception) {
+    consoleLog("Failed to initiate Firebase config restoration: $e")
+  }
+
   if(token != null) {
     initialSettings = initialSettings.copy(token = token)
   }
 
   platformUtilities.initialize(initialSettings)
+
+  // Silent cold-start refresh: if push is already opted-in and we have a session,
+  // acquire an FCM token without prompting for permission (browser has already granted
+  // it on a previous session) and route it through the same platformEventFlow the
+  // mobile platforms use. Skips cleanly if permission was revoked, config is missing,
+  // etc. — RootScreen's collector picks it up if it fires.
+  if (initialSettings.showPushNotifications
+    && initialSettings.token != null
+    && !initialSettings.tokenIsProtected
+  ) {
+    GlobalScope.launch {
+      val fcmToken = tryRefreshWebFCMToken("${initialSettings.apiEndpoint}/api")
+      if (fcmToken != null) {
+        platformEventFlow.emit(PlatformEvent.PushNotificationTokenReceived(fcmToken))
+      }
+    }
+  }
 
   val rootComponent = RootComponentImpl(
     componentContext = DefaultComponentContext(lifecycle = lifecycle),

@@ -52,7 +52,7 @@ enum class DevicePlatform(
     displayName = "Web",
     internalName = "wasm",
     usesNativeImageCropper = false,
-    hasPushNotifications = false,
+    hasPushNotifications = true,
     isDarwin = false,
     isMobile = false
   ),
@@ -127,6 +127,32 @@ interface CommonPlatformUtilities {
 
   fun saveSettings(settings: Settings)
 
+  /**
+   * Clear the on-disk copies of server-hosted config (public key, Firebase config) so
+   * they don't survive a kill/relaunch after the user changes API endpoint. Called
+   * from `SettingsInterfaceImpl.updateSettings` when `apiEndpoint` changes. Sync from
+   * the caller's perspective; implementations may fan out async browser work.
+   */
+  fun clearServerConfigCache()
+
+  /**
+   * Tear down and re-initialise the platform's Firebase singleton against the endpoint
+   * in [settings], then (if push is enabled) re-fetch the FCM token and emit it via the
+   * platform's event flow so `RootScreen`'s collector posts it to the new server.
+   *
+   * Called from `SettingsInterfaceImpl.setToken` when `settings.token` transitions from
+   * `null` → non-null (login completion). This is the only moment where all of these
+   * are true simultaneously: (a) the endpoint is finalised for this session, (b) there
+   * is a session on the target server to attach a push registration to, and (c) the
+   * `RootScreen` collector's `token != null` guard will accept the emit. Firing this
+   * on the earlier `apiEndpoint`-change hook would race against those guards and the
+   * emit would be silently discarded.
+   *
+   * Default implementation is a no-op — desktop has no push, and it lets platforms
+   * opt out cheaply during testing.
+   */
+  suspend fun reinitPushNotifications(settings: Settings) {}
+
   fun showAlert(message: String)
 
   suspend fun recoveryCodeToJWE(recoveryCode: String, settings: Settings): String
@@ -138,8 +164,6 @@ interface CommonPlatformUtilities {
 
   suspend fun encryptData(data: String, settings: Settings): String
   suspend fun decryptData(data: String, settings: Settings): String
-
-  fun getPublicKey(): String
 
   fun openURL(
     url: String,

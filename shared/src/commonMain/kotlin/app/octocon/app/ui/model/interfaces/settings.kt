@@ -14,13 +14,18 @@ import app.octocon.app.FontSizeScalar
 import app.octocon.app.Settings
 import app.octocon.app.SpotlightLongPressTimeout
 import app.octocon.app.ThemeColor
+import app.octocon.app.utils.FirebaseConfigProvider
 import app.octocon.app.utils.PlatformUtilities
+import app.octocon.app.utils.PublicKeyProvider
 import app.octocon.app.utils.crypto.AES
 import app.octocon.app.utils.crypto.CipherPadding
 import com.arkivanov.essenty.instancekeeper.InstanceKeeper
 import io.ktor.utils.io.core.toByteArray
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlin.io.encoding.Base64
 
 interface SettingsReadInterface {
@@ -104,10 +109,21 @@ class SettingsInterfaceImpl(
       )
     }
 
-  override fun setToken(token: String?) =
+  @OptIn(DelicateCoroutinesApi::class)
+  override fun setToken(token: String?) {
+    val wasLoggedOut = _settings.value.token == null
     updateSettings(updateWidgets = true) {
       it.copy(token = token)
     }
+
+    // Login just completed — reinit Firebase against the new session's endpoint.
+    // Hooked here rather than on `apiEndpoint` change because RootScreen's
+    // `token != null` collector guard would discard any emit fired earlier.
+    if (wasLoggedOut && token != null) {
+      val snapshot = _settings.value
+      GlobalScope.launch { platformUtilities.reinitPushNotifications(snapshot) }
+    }
+  }
 
   override fun clearEncryptionKey() =
     updateSettings(updateWidgets = true) {
@@ -312,5 +328,25 @@ class SettingsInterfaceImpl(
     if(updateWidgets) {
       platformUtilities.updateWidgets()
     }
+
+    if (old.apiEndpoint != new.apiEndpoint) {
+      invalidateServerConfigCache()
+    }
+  }
+
+  /**
+   * Endpoint changed — the previously fetched server-hosted config (RSA public key
+   * from `PublicKeyProvider`, `FirebaseConfig` from `FirebaseConfigProvider`) is for
+   * the old server and would poison the new one on next use. Clear both the in-memory
+   * caches and the on-disk copies each platform maintains. The live `FirebaseApp`
+   * singleton on native platforms is intentionally not torn down here — that's
+   * handled by [PlatformUtilities.reinitPushNotifications] fired from [setToken]
+   * on login completion (which is the only moment we're guaranteed to have a
+   * session on the new server to attach a fresh FCM registration to).
+   */
+  private fun invalidateServerConfigCache() {
+    PublicKeyProvider.clearCache()
+    FirebaseConfigProvider.clearCache()
+    platformUtilities.clearServerConfigCache()
   }
 }

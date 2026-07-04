@@ -1,8 +1,12 @@
 package app.octocon.app.utils
 
+import app.octocon.app.FirebaseIOSOptionsBridge
 import app.octocon.app.Settings
+import app.octocon.app.clearStoredFirebaseConfig
+import app.octocon.app.clearStoredPublicKey
 import app.octocon.app.getSettingsFromKeychain
 import app.octocon.app.saveSettingsToKeychain
+import app.octocon.app.saveStoredFirebaseConfig
 import com.liftric.kvault.KVault
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -12,7 +16,9 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.refTo
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
 import platform.Foundation.NSData
+import platform.Foundation.NSLog
 import platform.Foundation.NSURL
 import platform.Foundation.create
 import platform.SafariServices.SFSafariViewController
@@ -28,6 +34,7 @@ import platform.posix.memcpy
 import kotlin.experimental.ExperimentalNativeApi
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
+import kotlin.time.Clock
 
 actual val currentPlatform = DevicePlatform.iOS
 
@@ -53,6 +60,16 @@ actual interface PlatformDelegate {
   fun decryptData(key: NSData, iv: NSData, cipherText: NSData, tag: NSData): String?
 
   fun updateWidgets(sessionInvalidated: Boolean)
+
+  /**
+   * Tear down the current `FirebaseApp` (async, via `FirebaseApp.app()?.delete { }` on
+   * the main thread), then `FirebaseApp.configure(options:)` with the new options and
+   * re-attach the `MessagingDelegate`. Fire-and-forget from the Kotlin caller's
+   * perspective — the Swift implementation dispatches the async work internally, and
+   * the token flows back naturally through the existing `MessagingDelegate` →
+   * `providePushNotificationToken` path.
+   */
+  fun reconfigureFirebase(bridge: FirebaseIOSOptionsBridge)
 }
 
 
@@ -77,6 +94,44 @@ val platformUtilities = object : PlatformUtilities {
 
   override fun saveSettings(settings: Settings) {
     saveSettingsToKeychain(settings)
+  }
+
+  override fun clearServerConfigCache() {
+    clearStoredPublicKey()
+    clearStoredFirebaseConfig()
+  }
+
+  override suspend fun reinitPushNotifications(settings: Settings) {
+    val endpoint = "${settings.apiEndpoint}/api"
+
+    val config = try {
+      FirebaseConfigProvider.getConfig(FirebasePlatform.IOS, endpoint) as? FirebaseConfig.IOS
+    } catch (e: Exception) {
+      NSLog("Reinit: failed to fetch Firebase config: $e")
+      null
+    } ?: run {
+      NSLog("Reinit: no Firebase config available; skipping reconfigure")
+      return
+    }
+
+    try {
+      val json = globalSerializer.encodeToString(config)
+      saveStoredFirebaseConfig(json, Clock.System.now().toEpochMilliseconds())
+    } catch (e: Exception) {
+      NSLog("Reinit: failed to persist Firebase config to KVault (continuing anyway): $e")
+    }
+
+    val delegate = injectedPlatformDelegate ?: run {
+      NSLog("Reinit: PlatformDelegate not injected; skipping Firebase reconfigure")
+      return
+    }
+
+    // Kick off the Swift-side delete + reconfigure. The token flows back through the
+    // existing MessagingDelegate → providePushNotificationToken pipeline; no manual
+    // fetch needed here (and no gate on showPushNotifications — if push is off,
+    // Firebase still needs to be bound to the correct project for when the user
+    // later toggles push on).
+    delegate.reconfigureFirebase(FirebaseIOSOptionsBridge(config))
   }
 
   override fun showAlert(message: String) {
@@ -172,10 +227,6 @@ val platformUtilities = object : PlatformUtilities {
     } else {
       return result
     }
-  }
-
-  override fun getPublicKey(): String {
-    return PublicKeyProvider.currentCachedKey() ?: throw IllegalStateException("Public key has not been loaded yet")
   }
 
   override fun openURL(

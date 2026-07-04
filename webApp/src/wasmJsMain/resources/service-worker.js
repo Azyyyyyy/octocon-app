@@ -3,34 +3,169 @@ const PRECACHE_URLS = [];
 //^^ This is populated at build time with the actual list of files to precache;
 // based on the output of the bundler. See build.gradle.kts for details.
 
+// -----------------------------------------------------------------------------
+// Firebase Cloud Messaging integration
+// -----------------------------------------------------------------------------
+// The Firebase JS SDK compat build is imported at SW top level so that
+// firebase.messaging().onBackgroundMessage(...) can register its own `push`
+// listener. Config is fetched from the API server (see FirebaseConfigProvider on
+// the Kotlin side) and mirrored into a dedicated Cache Storage entry so a cold
+// SW wake-up after a browser restart can re-init from disk before the network
+// is even needed.
+
+const FIREBASE_CONFIG_CACHE = 'octocon-firebase-config-v1';
+const FIREBASE_CONFIG_URL = '/api/settings/firebase-config?platform=web';
+
+try {
+  importScripts(
+    'https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js',
+    'https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging-compat.js'
+  );
+} catch (e) {
+  console.warn('[SW] Failed to importScripts for Firebase:', e);
+}
+
+function normaliseFirebaseConfig(raw) {
+  // The API envelope wraps the payload in { data: {...}, error: null }.
+  const src = raw && raw.data;
+  if (!src) return null;
+  return {
+    apiKey: src.api_key,
+    authDomain: src.auth_domain,
+    projectId: src.project_id,
+    storageBucket: src.storage_bucket,
+    messagingSenderId: src.messaging_sender_id,
+    appId: src.app_id
+    // vapidKey is used only in the main-thread getToken call, not here.
+  };
+}
+
+async function readCachedFirebaseConfig() {
+  try {
+    const cache = await caches.open(FIREBASE_CONFIG_CACHE);
+    const cached = await cache.match(FIREBASE_CONFIG_URL);
+    if (!cached) return null;
+    return normaliseFirebaseConfig(await cached.json());
+  } catch (e) {
+    console.warn('[SW] readCachedFirebaseConfig failed:', e);
+    return null;
+  }
+}
+
+async function fetchAndCacheFirebaseConfig() {
+  try {
+    const resp = await fetch(FIREBASE_CONFIG_URL, { credentials: 'omit' });
+    if (!resp || resp.status !== 200) return null;
+    const cache = await caches.open(FIREBASE_CONFIG_CACHE);
+    await cache.put(FIREBASE_CONFIG_URL, resp.clone());
+    return normaliseFirebaseConfig(await resp.json());
+  } catch (e) {
+    console.warn('[SW] fetchAndCacheFirebaseConfig failed:', e);
+    return null;
+  }
+}
+
+let firebaseInitPromise = null;
+
+function ensureFirebaseInitialized() {
+  if (firebaseInitPromise) return firebaseInitPromise;
+  firebaseInitPromise = (async () => {
+    if (typeof firebase === 'undefined' || !firebase.messaging) {
+      console.warn('[SW] Firebase SDK not available (importScripts failed)');
+      return false;
+    }
+    let config = await readCachedFirebaseConfig();
+    if (!config) {
+      config = await fetchAndCacheFirebaseConfig();
+    }
+    if (!config || !config.apiKey || !config.projectId) {
+      console.warn('[SW] No usable Firebase config; skipping SW-side FCM init');
+      return false;
+    }
+    if (!firebase.apps.length) {
+      firebase.initializeApp(config);
+    }
+    const messaging = firebase.messaging();
+    messaging.onBackgroundMessage((payload) => {
+      try {
+        const notif = (payload && payload.notification) || {};
+        const title = notif.title || 'Octocon';
+        const options = {
+          body: notif.body || '',
+          icon: '/icons/icon-192.png',
+          badge: '/icons/icon-72.png',
+          data: (payload && payload.data) || {}
+        };
+        return self.registration.showNotification(title, options);
+      } catch (e) {
+        console.warn('[SW] onBackgroundMessage failed:', e);
+      }
+    });
+    return true;
+  })().catch((e) => {
+    console.warn('[SW] Firebase init failed:', e);
+    firebaseInitPromise = null;
+    return false;
+  });
+  return firebaseInitPromise;
+}
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const deepLink = event.notification.data && event.notification.data.deep_link;
+  const target = deepLink || '/';
+  event.waitUntil((async () => {
+    const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of clientList) {
+      if (client.url === target || client.url.endsWith(target)) {
+        return client.focus();
+      }
+    }
+    return self.clients.openWindow(target);
+  })());
+});
+
+// -----------------------------------------------------------------------------
+// Offline caching lifecycle
+// -----------------------------------------------------------------------------
+
 self.addEventListener('install', (event) => {
-  console.log('[SW] Install - precaching');
+  console.log('[SW] Install - precaching + Firebase init');
   // Pre-cache the static assets we know should exist. Be tolerant of
   // individual fetch failures so install doesn't fail if some build
   // artifact is missing during development.
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) =>
-      Promise.all(PRECACHE_URLS.map((url) =>
-        fetch(url).then((resp) => {
-          if (resp && resp.status === 200) {
-            return cache.put(url, resp.clone());
-          }
-          return undefined;
-        }).catch(() => undefined)
-      )).then(() => self.skipWaiting())
-    )
+    Promise.all([
+      caches.open(CACHE_NAME).then((cache) =>
+        Promise.all(PRECACHE_URLS.map((url) =>
+          fetch(url).then((resp) => {
+            if (resp && resp.status === 200) {
+              return cache.put(url, resp.clone());
+            }
+            return undefined;
+          }).catch(() => undefined)
+        ))
+      ),
+      // Kick off Firebase init but never let it break install. Failures here
+      // just mean no background pushes; foreground push and offline caching
+      // still work.
+      ensureFirebaseInitialized().catch(() => false)
+    ]).then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activate - clearing old caches');
+  console.log('[SW] Activate - clearing old caches + ensuring Firebase');
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(
-      keys.map((key) => {
-        if (key !== CACHE_NAME) return caches.delete(key);
-        return null;
-      })
-    )).then(() => self.clients.claim())
+    Promise.all([
+      caches.keys().then((keys) => Promise.all(
+        keys.map((key) => {
+          if (key !== CACHE_NAME && key !== FIREBASE_CONFIG_CACHE) return caches.delete(key);
+          return null;
+        })
+      )),
+      ensureFirebaseInitialized().catch(() => false)
+    ]).then(() => self.clients.claim())
   );
 });
 

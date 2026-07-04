@@ -13,7 +13,6 @@
 		7555FF83242A565900829871 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7555FF82242A565900829871 /* ContentView.swift */; };
 		D465213B2D28C8DA00437389 /* Pods_iosApp.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D46521392D28C8D100437389 /* Pods_iosApp.framework */; };
 		D4CE387C2F59378400BD769C /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = D4CE387B2F59378400BD769C /* Sentry */; };
-		D4D6A08B2D1E91080047877A /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = D4D6A08A2D1E91080047877A /* GoogleService-Info.plist */; };
 		D4D6A08E2D1E91FD0047877A /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = D4D6A08D2D1E91FD0047877A /* FirebaseMessaging */; };
 		D4E36C452D1D757F00D2BFE3 /* SwiftPlatformDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E36C442D1D757D00D2BFE3 /* SwiftPlatformDelegate.swift */; };
 		D4E36C482D1D764300D2BFE3 /* JOSESwift in Frameworks */ = {isa = PBXBuildFile; productRef = D4E36C472D1D764300D2BFE3 /* JOSESwift */; };
@@ -74,7 +73,6 @@
 		D46521392D28C8D100437389 /* Pods_iosApp.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = Pods_iosApp.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		D4C118F92D270A75005CCDF4 /* SDWebImage.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = SDWebImage.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		D4C118FD2D270A79005CCDF4 /* SDWebImageWebPCoder.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; path = SDWebImageWebPCoder.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		D4D6A08A2D1E91080047877A /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		D4D6A0942D1EA5EE0047877A /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		D4D6A0962D1EA5EE0047877A /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		D4E36C442D1D757D00D2BFE3 /* SwiftPlatformDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftPlatformDelegate.swift; sourceTree = "<group>"; };
@@ -177,7 +175,6 @@
 		7555FF7D242A565900829871 /* iosApp */ = {
 			isa = PBXGroup;
 			children = (
-				D4D6A08A2D1E91080047877A /* GoogleService-Info.plist */,
 				D4E36C442D1D757D00D2BFE3 /* SwiftPlatformDelegate.swift */,
 				D42A958A2D192F550033372E /* iosApp.entitlements */,
 				058557BA273AAA24004C7B11 /* Assets.xcassets */,
@@ -310,7 +307,6 @@
 			files = (
 				058557D9273AAEEB004C7B11 /* Preview Assets.xcassets in Resources */,
 				058557BB273AAA24004C7B11 /* Assets.xcassets in Resources */,
-				D4D6A08B2D1E91080047877A /* GoogleService-Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

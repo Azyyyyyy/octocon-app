@@ -47,8 +47,32 @@ class AppDelegate: NSObject, UIApplicationDelegate {
       defaults.set(true, forKey: "hasPreviouslyLaunched")
     }
     
-    FirebaseApp.configure()
-    Messaging.messaging().delegate = self
+    // Firebase config now lives on the API server (see FirebaseConfigProvider). Kick
+    // off the async bridge fetch; when it resolves we configure Firebase and wire the
+    // messaging delegate. If the fetch fails and there's no cache, push simply won't
+    // work until the next launch that reaches the server.
+    Task {
+      guard let bridge = try? await Main_iosKt.awaitFirebaseOptionsForIOS() else {
+        NSLog("Firebase options unavailable; skipping FirebaseApp.configure")
+        return
+      }
+      let options = FirebaseOptions(googleAppID: bridge.googleAppId, gcmSenderID: bridge.gcmSenderId)
+      options.apiKey = bridge.apiKey
+      options.projectID = bridge.projectId
+      options.bundleID = bridge.bundleId
+      if let storageBucket = bridge.storageBucket {
+        options.storageBucket = storageBucket
+      }
+      if let clientId = bridge.clientId {
+        options.clientID = clientId
+      }
+      await MainActor.run {
+        if FirebaseApp.app() == nil {
+          FirebaseApp.configure(options: options)
+        }
+        Messaging.messaging().delegate = self
+      }
+    }
     
     Task { WidgetCenter.shared.reloadAllTimelines() }
     

@@ -25,6 +25,7 @@ abstract class FailingPlatformUtilitiesBase : CommonPlatformUtilities {
   // would infer `Nothing`, which Kotlin rejects as an actual/expect mismatch.
   override fun exitApplication(exitApplicationType: ExitApplicationType) { unsupported() }
   override fun saveSettings(settings: Settings) { unsupported() }
+  override fun clearServerConfigCache() { unsupported() }
   override fun showAlert(message: String) { unsupported() }
   override suspend fun recoveryCodeToJWE(recoveryCode: String, settings: Settings): String =
     unsupported()
@@ -35,7 +36,6 @@ abstract class FailingPlatformUtilitiesBase : CommonPlatformUtilities {
   override fun decryptEncryptionKey(encryptedEncryptionKey: String): String = unsupported()
   override suspend fun encryptData(data: String, settings: Settings): String = unsupported()
   override suspend fun decryptData(data: String, settings: Settings): String = unsupported()
-  override fun getPublicKey(): String = unsupported()
   override fun openURL(
     url: String,
     colorSchemeParams: ColorSchemeParams,
@@ -43,4 +43,5 @@ abstract class FailingPlatformUtilitiesBase : CommonPlatformUtilities {
   ) { unsupported() }
   override fun updateWidgets(sessionInvalidated: Boolean) { unsupported() }
   override fun performAdditionalPushNotificationSetup() { unsupported() }
+  override suspend fun reinitPushNotifications(settings: Settings) { unsupported() }
 }
