@@ -1,10 +1,9 @@
 package app.octocon.app.ui.model
 
 import app.octocon.app.api.client
+import app.octocon.app.BuildInfo
 import app.octocon.app.api.model.SNAPINewsArticle
 import app.octocon.app.api.model.SNAPIResponse
-import app.octocon.app.ui.compose.screens.APP_VERSION
-import app.octocon.app.ui.compose.screens.VERSION_CODE
 import app.octocon.app.ui.registerStateHandler
 import app.octocon.app.ui.retainStateHandler
 import app.octocon.app.utils.ColorSchemeParams
@@ -52,7 +51,7 @@ private val snapiHttpBuilder: () -> (HttpRequestBuilder.() -> Unit) = {
     headers {
       header("Content-Type", "application/json")
     }
-    userAgent("Octocon v$APP_VERSION ($VERSION_CODE); ${currentPlatform.displayName}")
+    userAgent("Octocon ${BuildInfo.DISPLAY_STRING}; ${currentPlatform.displayName}")
   }
 }
 

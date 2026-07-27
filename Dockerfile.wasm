@@ -10,6 +10,13 @@ FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jdk-jammy AS builder
 
 WORKDIR /workspace
 
+# Central AppVersion inputs — see the "Centralised app versioning" block in
+# the root build.gradle.kts. Empty defaults mean "local build"; GHA sets
+# these via docker/build-push-action's `build-args`.
+ARG APPVERSION_RUN_NUMBER=""
+ARG APPVERSION_TAG=""
+ARG APPVERSION_RELEASE_NAME=""
+
 # Install system dependencies required for Node.js and build tools
 RUN apt-get update && apt-get install -y \
     libatomic1 \
@@ -29,6 +36,9 @@ RUN --mount=type=cache,id=octocon-gradle-cache,target=/root/.gradle,sharing=lock
     --mount=type=cache,id=octocon-workspace-gradle-cache,target=/workspace/.gradle,sharing=locked \
     ./gradlew --no-daemon -Dorg.gradle.internal.http.connectionTimeout=120000 \
               -Dorg.gradle.internal.http.socketTimeout=120000 \
+              -PappVersion.runNumber="$APPVERSION_RUN_NUMBER" \
+              -PappVersion.tag="$APPVERSION_TAG" \
+              -PappVersion.releaseName="$APPVERSION_RELEASE_NAME" \
               webApp:wasmJsBrowserDistribution
 
 # Runtime stage is intentionally metadata-only (COPY + CMD, no RUN) so that

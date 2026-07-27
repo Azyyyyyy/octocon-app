@@ -20,3 +20,24 @@ end
 #  platform :ios, '17.6'
 #  workspace_pods
 #end
+
+# Chain the centralised iOS version xcconfigs into every user target's Pods
+# xcconfig. Necessary because OctoconWidgetExtension's baseConfigurationReference
+# is a CocoaPods-generated xcconfig — we can't add the include to
+# project.pbxproj without `pod install` stomping the change. Idempotent via
+# the substring guard so re-running `pod install` doesn't duplicate lines.
+post_install do |installer|
+  installer.aggregate_targets.each do |target|
+    target.xcconfigs.each do |config_name, _xcconfig|
+      xcconfig_path = target.xcconfig_path(config_name)
+      contents = File.read(xcconfig_path)
+      marker = '#include "../../../Configuration/Version.xcconfig"'
+      next if contents.include?(marker)
+      File.open(xcconfig_path, 'a') do |f|
+        f.puts
+        f.puts marker
+        f.puts '#include? "../../../Configuration/Version.generated.xcconfig"'
+      end
+    end
+  end
+end

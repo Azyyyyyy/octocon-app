@@ -1,0 +1,7 @@
+// Default iOS version — mirrored from the last app-store release.
+// DO NOT edit MARKETING_VERSION / CURRENT_PROJECT_VERSION in Xcode's Build
+// Settings tab; that would re-add them to project.pbxproj and shadow this
+// xcconfig. Bump here (or let :shared:writeIosVersionXcconfig override via
+// Version.generated.xcconfig) instead.
+MARKETING_VERSION = 1.3.1
+CURRENT_PROJECT_VERSION = 74

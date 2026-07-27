@@ -1,6 +1,8 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
-version = "1.3.0"
+// Version is computed centrally in the root build.gradle.kts; override
+// per-build via -PappVersion.tag / -PappVersion.runNumber.
+version = rootProject.extra["app.versionName"] as String
 
 plugins {
   kotlin("multiplatform")
@@ -39,7 +41,9 @@ compose.desktop {
     nativeDistributions {
       targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
       packageName = "Octocon"
-      packageVersion = "1.3.0"
+      // Strict MAJOR.MINOR.PATCH — root script synthesises a compliant
+      // value even when the display version isn't semver (rolling builds).
+      packageVersion = rootProject.extra["app.desktopPackageVersion"] as String
 
       // val iconsRoot = project.file("desktop-icons")
       macOS {

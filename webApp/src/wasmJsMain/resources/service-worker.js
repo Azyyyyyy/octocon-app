@@ -1,4 +1,9 @@
-const CACHE_NAME = 'octocon-app-cache-v1';
+// APP_VERSION is stamped at build time by :webApp:generateServiceWorkerPrecache
+// from the central app version (see root build.gradle.kts). Any change to the
+// stamped value forces the activate handler at the bottom of this file to
+// delete the previous cache and repopulate it.
+const APP_VERSION = '__APP_VERSION__';
+const CACHE_NAME = `octocon-app-cache-${APP_VERSION}`;
 const PRECACHE_URLS = [];
 //^^ This is populated at build time with the actual list of files to precache;
 // based on the output of the bundler. See build.gradle.kts for details.

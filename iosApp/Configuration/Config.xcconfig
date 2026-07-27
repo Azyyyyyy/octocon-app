@@ -1,3 +1,10 @@
 TEAM_ID=
 BUNDLE_ID=app.octocon.OctoconApp
 APP_NAME=Octocon
+
+// Centralised iOS version — see :shared:writeIosVersionXcconfig. The `?`
+// variant on the generated include is silent-if-missing so devs who never
+// run Gradle build with the committed defaults from Version.xcconfig.
+#include "Version.xcconfig"
+#include? "Version.generated.xcconfig"
+
