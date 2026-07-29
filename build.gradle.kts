@@ -1,4 +1,10 @@
+import java.io.ByteArrayOutputStream
 import java.time.LocalDateTime
+import javax.inject.Inject
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.ValueSource
+import org.gradle.api.provider.ValueSourceParameters
+import org.gradle.process.ExecOperations
 
 plugins {
   // This is necessary to avoid the plugins to be loaded multiple times in each subproject's classloader.
@@ -47,33 +53,29 @@ run {
   val runNumberStr = providers.gradleProperty("appVersion.runNumber").orNull.orEmpty().trim()
   val releaseNameOverride = providers.gradleProperty("appVersion.releaseName").orNull.orEmpty().trim()
 
-  // Guarded with runCatching because `providers.exec` propagates startup
-  // failures (per Gradle 9 docs, use ValueSource for exception handling);
-  // isIgnoreExitValue only swallows non-zero exits. Inside the Docker
-  // builder the `git` binary is absent and .git is excluded from the
-  // context, so the exec would throw at configuration time and take the
-  // whole Wasm build down before the compile starts. The empty-string
-  // fallback is what the surrounding code already expects.
+  // Both fallbacks go through `SafeGitCommand` (defined below) because
+  // `providers.exec` propagates startup failures both at initial read AND
+  // during configuration-cache store — where an outer `runCatching` cannot
+  // reach the re-invocation of the internal `ProcessOutputValueSource`.
+  // Per Gradle 9 docs, exception handling belongs *inside* a ValueSource's
+  // `obtain()`. Inside the Docker builder the `git` binary is absent and
+  // `.git` is excluded from the context; SafeGitCommand catches the exec
+  // failure and returns "" so the surrounding code takes the wall-clock /
+  // buildId path.
   val gitTagFallback = if (tagOverride.isEmpty()) {
-    runCatching {
-      providers.exec {
-        commandLine("git", "describe", "--tags", "--exact-match", "HEAD")
-        isIgnoreExitValue = true
-      }.standardOutput.asText.orNull.orEmpty().trim()
-    }.getOrDefault("")
+    providers.of(SafeGitCommand::class.java) {
+      parameters.args.set(listOf("git", "describe", "--tags", "--exact-match", "HEAD"))
+    }.get().trim()
   } else ""
 
   val releaseNameFallback = if (releaseNameOverride.isEmpty()) {
-    runCatching {
-      providers.exec {
-        commandLine("git", "log", "--grep=^ReleaseName:", "-1", "--pretty=%B")
-        isIgnoreExitValue = true
-      }.standardOutput.asText.orNull.orEmpty().lineSequence()
-        .firstOrNull { it.startsWith("ReleaseName:") }
-        ?.substringAfter(":")
-        ?.trim()
-        .orEmpty()
-    }.getOrDefault("")
+    providers.of(SafeGitCommand::class.java) {
+      parameters.args.set(listOf("git", "log", "--grep=^ReleaseName:", "-1", "--pretty=%B"))
+    }.get().lineSequence()
+      .firstOrNull { it.startsWith("ReleaseName:") }
+      ?.substringAfter(":")
+      ?.trim()
+      .orEmpty()
   } else ""
 
   val tag = (tagOverride.ifEmpty { gitTagFallback }).removePrefix("v").trim()
@@ -122,4 +124,47 @@ run {
   extra["app.displayString"] = displayString
   extra["app.desktopPackageVersion"] = desktopPackageVersion
   extra["app.isLocal"] = isLocal
+}
+
+// ---------------------------------------------------------------------------
+// SafeGitCommand — a ValueSource that runs a git subprocess and returns its
+// stdout, swallowing any startup / exit failure as an empty string.
+// ---------------------------------------------------------------------------
+// Why a ValueSource and not `providers.exec`:
+//
+// `providers.exec { ... }` in Gradle 9 is backed by an internal
+// `ProcessOutputValueSource`. When configuration cache is enabled (see
+// `org.gradle.configuration-cache=true` in gradle.properties) Gradle invokes
+// the ValueSource at least twice per build — once at configuration-read time,
+// then again at configuration-cache-store time. An outer `runCatching`
+// around the `.standardOutput.asText.orNull` call only intercepts the first
+// invocation; the store-time re-invocation raises
+// `ProcessExecutionException: A problem occurred starting process 'command 'git''`
+// unguarded, and fails the whole build. Handling the exception INSIDE
+// `obtain()` (as Gradle's docs prescribe) ensures every invocation returns a
+// safe, serialisable String, so both the read and the store phases succeed
+// in environments without a `git` binary (the Wasm Docker builder in CI).
+// ---------------------------------------------------------------------------
+abstract class SafeGitCommand : ValueSource<String, SafeGitCommand.Params> {
+  interface Params : ValueSourceParameters {
+    val args: ListProperty<String>
+  }
+
+  @get:Inject
+  abstract val execOperations: ExecOperations
+
+  override fun obtain(): String {
+    return try {
+      val stdout = ByteArrayOutputStream()
+      execOperations.exec {
+        commandLine(parameters.args.get())
+        standardOutput = stdout
+        errorOutput = ByteArrayOutputStream()
+        isIgnoreExitValue = true
+      }
+      stdout.toString(Charsets.UTF_8.name())
+    } catch (_: Exception) {
+      ""
+    }
+  }
 }
