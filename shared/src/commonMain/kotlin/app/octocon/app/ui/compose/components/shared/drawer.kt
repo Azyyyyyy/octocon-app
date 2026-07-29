@@ -45,10 +45,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import app.octocon.app.BuildInfo
 import app.octocon.app.ui.compose.components.octoconLogoVectorPainter
-import app.octocon.app.ui.compose.screens.APP_VERSION
 import app.octocon.app.ui.compose.screens.IS_BETA
-import app.octocon.app.ui.compose.screens.VERSION_CODE
 import app.octocon.app.ui.compose.utils.SpotlightTooltip
 import app.octocon.app.ui.model.main.MainAppComponent
 import app.octocon.app.ui.model.main.hometabs.HomeTabsComponentImpl
@@ -419,7 +418,7 @@ fun CommonNavigationDrawer(
     Spacer(Modifier.height(24.dp))
     Spacer(Modifier.weight(1.0f))
     Text(
-      "v$APP_VERSION ($VERSION_CODE)",
+      BuildInfo.DISPLAY_STRING,
       style = MaterialTheme.typography.labelSmall.merge(
         color = MaterialTheme.colorScheme.onSurface.copy(
           alpha = 0.5f

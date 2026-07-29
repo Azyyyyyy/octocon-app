@@ -29,8 +29,10 @@ import io.kamel.image.config.LocalKamelConfig
 // If only value classes could be `const`...
 val GLOBAL_PADDING = 16.dp
 
-const val VERSION_CODE = "74"
-const val APP_VERSION = "1.3.1 \"Ammonite\""
+// VERSION_CODE / APP_VERSION are now generated into `app.octocon.app.BuildInfo`
+// by the :shared:generateBuildInfoKt Gradle task (see shared/build.gradle.kts
+// and the root build.gradle.kts "Centralised app versioning" block). Consumers
+// should import `BuildInfo` directly.
 val IS_BETA = DevicePlatform.isWasm
 
 /*@Composable

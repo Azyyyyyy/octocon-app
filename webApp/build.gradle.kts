@@ -2,9 +2,12 @@
 
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import java.io.File
+import java.time.LocalDateTime
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputFile
@@ -59,6 +62,21 @@ abstract class GenerateServiceWorkerPrecacheTask : DefaultTask() {
   @get:OutputFile
   abstract val outputServiceWorkerFile: RegularFileProperty
 
+  // buildIdEager holds the version stamp computed at configuration time
+  // (either "YYYY.MM.DD-<runNumber>" for CI or "YYYY.MM.DD-HHMMSS" for local).
+  // When `localBuild` is true this value is ignored and a fresh wall-clock
+  // stamp is computed inside the task action so consecutive local builds bust
+  // the SW cache. When `localBuild` is false the eager value is deterministic
+  // and safe to bake into the up-to-date snapshot.
+  // (Property name deliberately avoids `is*` — Gradle's task-class decorator
+  // rejects abstract Property getters whose names collide with the JavaBeans
+  // boolean-getter convention.)
+  @get:Input
+  abstract val buildIdEager: Property<String>
+
+  @get:Input
+  abstract val localBuild: Property<Boolean>
+
   @TaskAction
   fun generate() {
     val processedDir = processedResourcesDir.get().asFile
@@ -101,11 +119,34 @@ abstract class GenerateServiceWorkerPrecacheTask : DefaultTask() {
       }
     }
 
-    val regex = Regex("""const PRECACHE_URLS = \[([\s\S]*?)\];""")
-    val newContent = if (regex.containsMatchIn(content)) {
-      content.replace(regex, "const PRECACHE_URLS = [\n$urlsArrayText\n];")
+    val precacheRegex = Regex("""const PRECACHE_URLS = \[([\s\S]*?)\];""")
+    val withPrecache = if (precacheRegex.containsMatchIn(content)) {
+      content.replace(precacheRegex, "const PRECACHE_URLS = [\n$urlsArrayText\n];")
     } else {
-      content.replaceFirst("const CACHE_NAME = 'octocon-app-cache-v1';", "const CACHE_NAME = 'octocon-app-cache-v1';\nconst PRECACHE_URLS = [\n$urlsArrayText\n];")
+      // Fallback for a template that pre-dates the APP_VERSION rewrite: inject
+      // PRECACHE_URLS immediately after the CACHE_NAME line so the SW still
+      // has both fields.
+      content.replaceFirst(
+        Regex("""(const CACHE_NAME = .*?;)"""),
+        "$1\nconst PRECACHE_URLS = [\n$urlsArrayText\n];"
+      )
+    }
+
+    val effectiveBuildId = if (localBuild.get()) {
+      val now = LocalDateTime.now()
+      "%04d.%02d.%02d-%02d%02d%02d".format(
+        now.year, now.monthValue, now.dayOfMonth,
+        now.hour, now.minute, now.second
+      )
+    } else {
+      buildIdEager.get()
+    }
+
+    val versionRegex = Regex("""const APP_VERSION = ['"][^'"]*['"];""")
+    val newContent = if (versionRegex.containsMatchIn(withPrecache)) {
+      withPrecache.replace(versionRegex, "const APP_VERSION = '$effectiveBuildId';")
+    } else {
+      withPrecache
     }
 
     // Ensure output directory exists and write atomically
@@ -116,7 +157,7 @@ abstract class GenerateServiceWorkerPrecacheTask : DefaultTask() {
       tmp.copyTo(swFile, overwrite = true)
       tmp.delete()
     }
-    println("[generatePrecache] updated ${swFile.absolutePath} with ${files.size} entries")
+    println("[generatePrecache] updated ${swFile.absolutePath} with ${files.size} entries; APP_VERSION=$effectiveBuildId")
   }
 }
 
@@ -124,6 +165,15 @@ val generateServiceWorkerPrecache = tasks.register<GenerateServiceWorkerPrecache
   processedResourcesDir.set(layout.buildDirectory.dir("processedResources/wasmJs/main"))
   templateSourceFile.set(layout.projectDirectory.file("src/wasmJsMain/resources/service-worker.js"))
   outputServiceWorkerFile.set(layout.buildDirectory.file("processedResources/wasmJs/main/service-worker.js"))
+  buildIdEager.set(rootProject.extra["app.buildId"] as String)
+  localBuild.set(rootProject.extra["app.isLocal"] as Boolean)
+  // When there's no runNumber we regenerate on every invocation so the browser
+  // sees a new CACHE_NAME each local build. CI runs are deterministic (the
+  // runNumber-derived buildId is stable) and can use the default up-to-date
+  // checks.
+  if (rootProject.extra["app.isLocal"] as Boolean) {
+    outputs.upToDateWhen { false }
+  }
 }
 
 

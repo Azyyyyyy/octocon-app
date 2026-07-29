@@ -180,6 +180,32 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Need full history so the compute-version step below can walk back
+          # through commits with `git log --grep=^ReleaseName:` — the marker
+          # is intentionally sticky across commits until re-declared.
+          fetch-depth: 0
+
+      # Central AppVersion knobs threaded into Dockerfile.wasm as build-args
+      # and re-injected as -PappVersion.* flags on the Gradle command inside.
+      #   TAG          -> the git tag on HEAD (e.g. "v1.3.2"); empty for
+      #                    rolling builds. Presence flips versionName from
+      #                    the build-id to the semver.
+      #   RELEASE_NAME -> value of the most recent `ReleaseName: <name>`
+      #                    line reachable from HEAD (sticky across commits).
+      #   run_number    is passed straight from github.run_number below and
+      #                    forms the build-id date-runNumber pair.
+      - name: Compute app version inputs
+        id: appversion
+        run: |
+          set -euo pipefail
+          TAG=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
+          RELEASE_NAME=$(git log --grep='^ReleaseName:' -1 --pretty=%B \
+                          | sed -n 's/^ReleaseName:[[:space:]]*//p' \
+                          | head -n1 || true)
+          echo "tag=$TAG"                     >> "$GITHUB_OUTPUT"
+          echo "release_name=$RELEASE_NAME"   >> "$GITHUB_OUTPUT"
+          echo "Resolved tag='$TAG' release_name='$RELEASE_NAME' run_number='${{ github.run_number }}'"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -213,6 +239,10 @@ jobs:
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APPVERSION_RUN_NUMBER=${{ github.run_number }}
+            APPVERSION_TAG=${{ steps.appversion.outputs.tag }}
+            APPVERSION_RELEASE_NAME=${{ steps.appversion.outputs.release_name }}
           # Suppress the SBOM/provenance attestation manifests — they otherwise
           # show up as `unknown/unknown` entries in the OCI index, which confuses
           # the bootstrapper's manifest inspection.

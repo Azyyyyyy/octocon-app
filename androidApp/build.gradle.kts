@@ -55,8 +55,10 @@ android {
     applicationId = "app.octocon.OctoconApp"
     minSdk = (findProperty("android.minSdk") as String).toInt()
     targetSdk = (findProperty("android.targetSdk") as String).toInt()
-    versionCode = (findProperty("android.versionCode") as String).toInt()
-    versionName = findProperty("android.versionName") as String
+    // Version + name are computed centrally in the root build.gradle.kts;
+    // override per-build via -PappVersion.tag / -PappVersion.runNumber.
+    versionCode = rootProject.extra["app.versionCode"] as Int
+    versionName = rootProject.extra["app.versionName"] as String
   }
 
   compileOptions {

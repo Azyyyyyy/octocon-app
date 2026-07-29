@@ -1,7 +1,7 @@
 package app.octocon.app.ui.model
 
+import app.octocon.app.BuildInfo
 import app.octocon.app.ui.compose.screens.IS_BETA
-import app.octocon.app.ui.compose.screens.VERSION_CODE
 import app.octocon.app.ui.model.interfaces.SettingsInterface
 import app.octocon.app.ui.registerStateHandler
 import app.octocon.app.ui.retainStateHandler
@@ -61,7 +61,7 @@ internal expect suspend fun performHealthCheck(baseUrl: String): HealthCheckResu
 private fun buildLoginUrl(provider: String, apiEndpoint: String): String =
   "$apiEndpoint/auth/${provider}" +
           "?platform=${DevicePlatform.internalName}" +
-          "&version_code=${VERSION_CODE}" +
+          "&version_code=${BuildInfo.VERSION_CODE}" +
           "&is_beta=${IS_BETA}" +
           "&redirect_uri=${buildRedirectUri("auth/token")}"
 
