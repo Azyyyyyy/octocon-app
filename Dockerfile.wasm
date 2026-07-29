@@ -50,8 +50,11 @@ server {
     server_name  localhost;
 
     location / {
-        root   /usr/share/nginx/html;
-        index  index.html index.htm;
+        root       /usr/share/nginx/html;
+        index      index.html index.htm;
+        # SPA fallback for OAuth redirect routes owned by the client
+        # (/auth/token, /link_success/*). Query string is preserved.
+        try_files  $uri $uri/ /index.html;
     }
 
     error_page   500 502 503 504  /50x.html;

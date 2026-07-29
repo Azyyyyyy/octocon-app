@@ -175,7 +175,7 @@ private fun tryGetToken(): String? {
   return params.get("token").also {
     consoleLog("Token is: $it")
     if(it != null) {
-      window.history.replaceState(null, document.title, window.location.pathname)
+      window.history.replaceState(null, document.title, "/")
       consoleLog("Token is not null; nuking history URL")
     }
   }
