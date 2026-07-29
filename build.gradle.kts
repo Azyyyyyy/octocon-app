@@ -47,22 +47,33 @@ run {
   val runNumberStr = providers.gradleProperty("appVersion.runNumber").orNull.orEmpty().trim()
   val releaseNameOverride = providers.gradleProperty("appVersion.releaseName").orNull.orEmpty().trim()
 
+  // Guarded with runCatching because `providers.exec` propagates startup
+  // failures (per Gradle 9 docs, use ValueSource for exception handling);
+  // isIgnoreExitValue only swallows non-zero exits. Inside the Docker
+  // builder the `git` binary is absent and .git is excluded from the
+  // context, so the exec would throw at configuration time and take the
+  // whole Wasm build down before the compile starts. The empty-string
+  // fallback is what the surrounding code already expects.
   val gitTagFallback = if (tagOverride.isEmpty()) {
-    providers.exec {
-      commandLine("git", "describe", "--tags", "--exact-match", "HEAD")
-      isIgnoreExitValue = true
-    }.standardOutput.asText.orNull.orEmpty().trim()
+    runCatching {
+      providers.exec {
+        commandLine("git", "describe", "--tags", "--exact-match", "HEAD")
+        isIgnoreExitValue = true
+      }.standardOutput.asText.orNull.orEmpty().trim()
+    }.getOrDefault("")
   } else ""
 
   val releaseNameFallback = if (releaseNameOverride.isEmpty()) {
-    providers.exec {
-      commandLine("git", "log", "--grep=^ReleaseName:", "-1", "--pretty=%B")
-      isIgnoreExitValue = true
-    }.standardOutput.asText.orNull.orEmpty().lineSequence()
-      .firstOrNull { it.startsWith("ReleaseName:") }
-      ?.substringAfter(":")
-      ?.trim()
-      .orEmpty()
+    runCatching {
+      providers.exec {
+        commandLine("git", "log", "--grep=^ReleaseName:", "-1", "--pretty=%B")
+        isIgnoreExitValue = true
+      }.standardOutput.asText.orNull.orEmpty().lineSequence()
+        .firstOrNull { it.startsWith("ReleaseName:") }
+        ?.substringAfter(":")
+        ?.trim()
+        .orEmpty()
+    }.getOrDefault("")
   } else ""
 
   val tag = (tagOverride.ifEmpty { gitTagFallback }).removePrefix("v").trim()
