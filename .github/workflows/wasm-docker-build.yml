@@ -257,8 +257,18 @@ jobs:
       # `Compile instrumented tests` step in the Android job — fails fast
       # on source-set / cinterop / pod-drift issues before we pay
       # simulator boot cost in the test step below.
+      #
+      # `-Pkotlin.incremental.native=false` avoids a known Kotlin/Native
+      # compiler assertion the linker hits on iosSimulatorArm64 Debug/Test
+      # klibs:
+      #   Failed to build cache for [...]/multiplatform-markdown-renderer[...]
+      #   java.lang.AssertionError: Lowering ReturnsInsertion: phases
+      #   [Enums] are required, but not satisfied
+      # The Kotlin compiler itself suggests this flag as the workaround.
+      # Doesn't affect mobile-release.yml which uses linkReleaseFramework
+      # (a different phase pipeline).
       - name: Compile iOS simulator tests
-        run: ./gradlew :shared:compileTestKotlinIosSimulatorArm64 --stacktrace
+        run: ./gradlew :shared:compileTestKotlinIosSimulatorArm64 -Pkotlin.incremental.native=false --stacktrace
 
       # Build the Xcode target for Simulator arch. Skips archive, IPA
       # pack, signing, and attestation — the pieces mobile-release adds
@@ -296,9 +306,11 @@ jobs:
       # Direct KMP analog of :shared:connectedAndroidDeviceTest — same
       # commonTest source set, compiled for iosSimulatorArm64, launched
       # on a Kotlin/Native-managed simulator. Iterates the same test
-      # corpus across both mobile targets.
+      # corpus across both mobile targets. Same -Pkotlin.incremental.native
+      # workaround as the smoke step; the linker (linkDebugTestIosSimulatorArm64)
+      # is what actually trips the [Enums] phase assertion.
       - name: Run :shared:iosSimulatorArm64Test
-        run: ./gradlew :shared:iosSimulatorArm64Test --stacktrace
+        run: ./gradlew :shared:iosSimulatorArm64Test -Pkotlin.incremental.native=false --stacktrace
 
       - name: Upload test reports
         if: always()
