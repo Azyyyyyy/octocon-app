@@ -252,15 +252,22 @@ jobs:
           echo "release_name=$RELEASE_NAME"   >> "$GITHUB_OUTPUT"
           echo "Resolved tag='${RELEASE_TAG}' release_name='$RELEASE_NAME' run_number='${{ github.run_number }}'"
 
-      # Stamp MARKETING_VERSION / CURRENT_PROJECT_VERSION into
-      # iosApp/Configuration/Version.generated.xcconfig BEFORE pod install
-      # — the xcconfig is chained into every Pods aggregate xcconfig via
-      # the Podfile's post_install hook, so it needs to exist at the
-      # moment pod install runs to be picked up by the linker/plist.
-      - name: Stamp iOS version xcconfig
+      # Pre-`pod install` Gradle work:
+      #   * writeIosVersionXcconfig — stamp MARKETING_VERSION /
+      #     CURRENT_PROJECT_VERSION into Version.generated.xcconfig; the
+      #     Podfile's post_install hook chains it into every Pods xcconfig
+      #     so it must exist at pod-install time.
+      #   * generateDummyFramework — the KMP CocoaPods plugin's
+      #     shared.podspec (checked in at shared/shared.podspec) refuses
+      #     to load unless build/cocoapods/framework/shared.framework
+      #     already exists. Without this task pod install fails with
+      #     "Kotlin framework 'shared' doesn't exist yet". The dummy
+      #     framework is a placeholder — real compilation still happens
+      #     via the pod's syncFramework script at xcodebuild time.
+      - name: Prepare KMP iOS artifacts
         run: |
           set -euo pipefail
-          ./gradlew :shared:writeIosVersionXcconfig \
+          ./gradlew :shared:writeIosVersionXcconfig :shared:generateDummyFramework \
             -PappVersion.tag="${RELEASE_TAG}" \
             -PappVersion.runNumber="${{ github.run_number }}" \
             -PappVersion.releaseName="${{ steps.appversion.outputs.release_name }}" \
