@@ -91,9 +91,23 @@ kotlin {
       extraOpts += listOf("-compiler-option", "-fmodules")
     }*/
 
-    pod("TOCropViewController")
-    pod("SDWebImage")
-    pod("SDWebImageWebPCoder")
+    // Pin each pod to the exact version in iosApp/Podfile.lock. Without this,
+    // Kotlin's synthetic CocoaPods install (used to generate cinterop klibs) has
+    // no lockfile of its own and resolves whatever the CDN currently reports as
+    // latest, which drifts from what `pod install` picks for the Xcode workspace.
+    // For TOCropViewController that meant cinterop generated bindings against 3.x
+    // (breaking API: `customAspectRatio` removed, `aspectRatioPreset` retyped to
+    // `CGSize`, enum constants dropped) while iosApp linked against 2.7.4's ABI —
+    // an ABI mismatch that also broke `:shared:compileKotlinIosArm64`.
+    pod("TOCropViewController") {
+      version = "2.7.4"
+    }
+    pod("SDWebImage") {
+      version = "5.20.0"
+    }
+    pod("SDWebImageWebPCoder") {
+      version = "0.14.6"
+    }
   }
 
   sourceSets {
