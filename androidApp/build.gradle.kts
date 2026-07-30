@@ -45,6 +45,30 @@ dependencies {
   implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
 }
 
+// ---------------------------------------------------------------------------
+// Release signing (CI only)
+// ---------------------------------------------------------------------------
+// Credentials are read from environment variables (preferred, matches the
+// mobile-release.yml workflow) with a Gradle-property fallback for anyone
+// wanting to test a signed local build via ~/.gradle/gradle.properties.
+// If any input is missing the `release` build type falls back to unsigned
+// output so local `./gradlew :androidApp:assembleRelease` still works
+// without a keystore checked in anywhere.
+// ---------------------------------------------------------------------------
+val releaseKeystoreFile = (System.getenv("OCTOCON_KEYSTORE_FILE")
+  ?: findProperty("octocon.keystoreFile") as String?)?.let(::file)
+val releaseKeystorePassword = System.getenv("OCTOCON_KEYSTORE_PASSWORD")
+  ?: findProperty("octocon.keystorePassword") as String?
+val releaseKeyAlias = System.getenv("OCTOCON_KEY_ALIAS")
+  ?: findProperty("octocon.keyAlias") as String?
+val releaseKeyPassword = System.getenv("OCTOCON_KEY_PASSWORD")
+  ?: findProperty("octocon.keyPassword") as String?
+
+val hasReleaseSigning = releaseKeystoreFile?.exists() == true &&
+  !releaseKeystorePassword.isNullOrEmpty() &&
+  !releaseKeyAlias.isNullOrEmpty() &&
+  !releaseKeyPassword.isNullOrEmpty()
+
 android {
   compileSdk = (findProperty("android.compileSdk") as String).toInt()
   namespace = "app.octocon"
@@ -66,6 +90,17 @@ android {
     targetCompatibility = JavaVersion.VERSION_21
   }
 
+  signingConfigs {
+    if (hasReleaseSigning) {
+      create("release") {
+        storeFile = releaseKeystoreFile
+        storePassword = releaseKeystorePassword
+        keyAlias = releaseKeyAlias
+        keyPassword = releaseKeyPassword
+      }
+    }
+  }
+
   buildTypes {
     getByName("debug") {
       // applicationIdSuffix = ".debug"
@@ -77,6 +112,9 @@ android {
         getDefaultProguardFile("proguard-android-optimize.txt"),
         "proguard-rules.pro"
       )
+      if (hasReleaseSigning) {
+        signingConfig = signingConfigs.getByName("release")
+      }
     }
 
     create("debugMinified") {

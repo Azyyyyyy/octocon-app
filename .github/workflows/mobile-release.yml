@@ -1,0 +1,396 @@
+name: Mobile Release (tag)
+
+# Fires on any `v*` tag push (e.g. `v1.3.2`). Produces a signed Android APK +
+# AAB, an unsigned iOS .ipa, generates a SLSA v1 build-provenance attestation
+# for each artifact via actions/attest-build-provenance, then attaches all
+# three files to a draft GitHub Release for the tag.
+#
+# Also runnable manually via workflow_dispatch for dry-runs. On a manual
+# run the `tag` input drives version stamping and file names (so we can
+# smoke-test without cutting a real tag), and the `publish` input gates
+# whether a draft GitHub Release is created — off by default so a dry-run
+# can never accidentally create a tag/release. Artifacts still land as
+# workflow artifacts (14-day retention) and attestations still fire so
+# the full pipeline is exercised.
+#
+# See docs on the central versioning knobs consumed via -PappVersion.tag /
+# -PappVersion.runNumber / -PappVersion.releaseName in the root
+# build.gradle.kts "Centralised app versioning" block.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Synthetic tag for versioning + artifact names (e.g. v0.0.0-test). No git tag is created.'
+        required: true
+        default: 'v0.0.0-test'
+      publish:
+        description: 'Create/update a draft GitHub Release for the tag. Off = artifacts only (recommended for dry-runs).'
+        required: false
+        type: boolean
+        default: false
+
+# The workflow itself only needs read access at the top level. Each job
+# opts into narrower privilege (attestations: write, contents: write, ...)
+# where it actually needs it. Keeps blast radius tight if any single job's
+# GITHUB_TOKEN is ever leaked.
+permissions:
+  contents: read
+
+# Resolve the "release tag" that drives version stamping and file names
+# once at the workflow level. On a real tag push github.ref_name is the
+# tag itself (e.g. refs/tags/v1.3.2 -> v1.3.2). On workflow_dispatch it
+# comes from the input. Downstream steps reference env.RELEASE_TAG so
+# neither the shell nor the appversion step needs to know which trigger
+# fired us.
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Android: signed APK + AAB, provenance-attested.
+  # -------------------------------------------------------------------------
+  android-release:
+    name: Build signed Android APK + AAB
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Sigstore OIDC token used by actions/attest-build-provenance for
+      # keyless signing of the SLSA provenance attestation.
+      id-token: write
+      # Required to persist the resulting attestation on the repo's
+      # attestations API (visible under Actions -> Attestations).
+      attestations: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need full history so the release-name walk below can reach
+          # older commits with `git log --grep=^ReleaseName:`.
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Resolve the sticky ReleaseName marker for version stamping. The
+      # tag itself is already resolved once at workflow level into
+      # env.RELEASE_TAG (real tag on push, synthetic input on dispatch)
+      # so this step only needs to walk history for the release name.
+      - name: Compute app version inputs
+        id: appversion
+        run: |
+          set -euo pipefail
+          RELEASE_NAME=$(git log --grep='^ReleaseName:' -1 --pretty=%B \
+                          | sed -n 's/^ReleaseName:[[:space:]]*//p' \
+                          | head -n1 || true)
+          echo "release_name=$RELEASE_NAME"   >> "$GITHUB_OUTPUT"
+          echo "Resolved tag='${RELEASE_TAG}' release_name='$RELEASE_NAME' run_number='${{ github.run_number }}'"
+
+      # Materialise the release keystore from the base64-encoded secret.
+      # Written to $RUNNER_TEMP (auto-cleaned per run, not on the workspace
+      # tree) so it can never accidentally end up committed or bundled in
+      # an uploaded artifact.
+      - name: Decode release keystore
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SIGNING_KEYSTORE_BASE64:-}" ]; then
+            echo "::error::SIGNING_KEYSTORE_BASE64 secret is not set. Configure it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "Keystore written to $RUNNER_TEMP/release.keystore ($(stat -c%s "$RUNNER_TEMP/release.keystore") bytes)"
+
+      # Runs :androidApp:assembleRelease and :bundleRelease against the
+      # signing config wired in androidApp/build.gradle.kts (which reads
+      # OCTOCON_KEYSTORE_* from env). Fails fast if secrets are missing —
+      # the signing block would silently fall back to unsigned output
+      # otherwise, which is fine locally but a bug in CI.
+      - name: Build APK + AAB
+        env:
+          OCTOCON_KEYSTORE_FILE: ${{ runner.temp }}/release.keystore
+          OCTOCON_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          OCTOCON_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          OCTOCON_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./gradlew :androidApp:assembleRelease :androidApp:bundleRelease \
+            -PappVersion.tag="${RELEASE_TAG}" \
+            -PappVersion.runNumber="${{ github.run_number }}" \
+            -PappVersion.releaseName="${{ steps.appversion.outputs.release_name }}" \
+            --stacktrace
+
+      # Copy the built outputs to $RUNNER_TEMP with tag-suffixed names so
+      # the release job doesn't have to know Gradle's internal output
+      # layout. Also verifies each file exists and is non-empty — a silent
+      # unsigned/skipped build would otherwise slip through to the release
+      # step.
+      - name: Stage signed artifacts
+        id: stage
+        run: |
+          set -euo pipefail
+          APK_SRC="androidApp/build/outputs/apk/release/androidApp-release.apk"
+          AAB_SRC="androidApp/build/outputs/bundle/release/androidApp-release.aab"
+          APK_DST="$RUNNER_TEMP/Octocon-${RELEASE_TAG}.apk"
+          AAB_DST="$RUNNER_TEMP/Octocon-${RELEASE_TAG}.aab"
+          for pair in "$APK_SRC:$APK_DST" "$AAB_SRC:$AAB_DST"; do
+            SRC="${pair%%:*}"; DST="${pair#*:}"
+            if [ ! -s "$SRC" ]; then
+              echo "::error::Expected build output missing or empty: $SRC"
+              exit 1
+            fi
+            cp "$SRC" "$DST"
+            echo "Staged $(basename "$DST") ($(stat -c%s "$DST") bytes)"
+          done
+          echo "apk=$APK_DST" >> "$GITHUB_OUTPUT"
+          echo "aab=$AAB_DST" >> "$GITHUB_OUTPUT"
+
+      # SLSA v1 build-provenance attestation covering both files. The
+      # wrapper action auto-generates the predicate from the GHA runtime
+      # context and signs it with a short-lived Sigstore certificate
+      # bound to the workflow's OIDC identity. Consumers verify with
+      # `gh attestation verify <file> --repo <owner>/<repo>`.
+      #
+      # As of v4 this action (and actions/attest-sbom) are thin wrappers
+      # on actions/attest@v4 — swap freely if you ever want to attach a
+      # custom predicate (e.g. an SBOM) alongside the build provenance.
+      - name: Attest build provenance (APK + AAB)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            ${{ steps.stage.outputs.apk }}
+            ${{ steps.stage.outputs.aab }}
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: |
+            ${{ steps.stage.outputs.apk }}
+            ${{ steps.stage.outputs.aab }}
+          if-no-files-found: error
+          retention-days: 14
+
+  # -------------------------------------------------------------------------
+  # iOS: unsigned .ipa, provenance-attested. Signing is intentionally
+  # disabled at xcodebuild-invocation time so the pbxproj (which still
+  # references team AVJM9TZ9VF for local dev) doesn't need to change.
+  # -------------------------------------------------------------------------
+  ios-release:
+    name: Build unsigned iOS .ipa
+    runs-on: macos-14
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Kotlin/Native compiler + platform libs + prebuilts land under
+      # ~/.konan on every fresh macOS runner. Missing it adds ~5 min per
+      # build for the shared iosArm64 framework. Keyed on the Kotlin
+      # version property because a Kotlin bump invalidates the cached
+      # compiler; loosely restored across other keys so a Kotlin
+      # patch-bump doesn't force a full cold miss.
+      - name: Cache Kotlin/Native (~/.konan)
+        uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ hashFiles('gradle.properties') }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
+          restore-keys: |
+            konan-${{ runner.os }}-${{ hashFiles('gradle.properties') }}-
+            konan-${{ runner.os }}-
+
+      # CocoaPods spec repo (~/.cocoapods/repos, ~1-2 GB) + downloaded
+      # pod tarballs (~/Library/Caches/CocoaPods) + the generated Pods
+      # workspace. Keyed on Podfile.lock so a pod bump busts cleanly;
+      # restored loosely to survive most cache misses. The cache-hit
+      # output gates whether pod install needs --repo-update below.
+      - name: Cache CocoaPods
+        id: pods-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cocoapods
+            ~/Library/Caches/CocoaPods
+            iosApp/Pods
+          key: cocoapods-${{ runner.os }}-${{ hashFiles('iosApp/Podfile.lock') }}
+          restore-keys: |
+            cocoapods-${{ runner.os }}-
+
+      - name: Compute app version inputs
+        id: appversion
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_NAME=$(git log --grep='^ReleaseName:' -1 --pretty=%B \
+                          | sed -n 's/^ReleaseName:[[:space:]]*//p' \
+                          | head -n1 || true)
+          echo "release_name=$RELEASE_NAME"   >> "$GITHUB_OUTPUT"
+          echo "Resolved tag='${RELEASE_TAG}' release_name='$RELEASE_NAME' run_number='${{ github.run_number }}'"
+
+      # Stamp MARKETING_VERSION / CURRENT_PROJECT_VERSION into
+      # iosApp/Configuration/Version.generated.xcconfig BEFORE pod install
+      # — the xcconfig is chained into every Pods aggregate xcconfig via
+      # the Podfile's post_install hook, so it needs to exist at the
+      # moment pod install runs to be picked up by the linker/plist.
+      - name: Stamp iOS version xcconfig
+        run: |
+          set -euo pipefail
+          ./gradlew :shared:writeIosVersionXcconfig \
+            -PappVersion.tag="${RELEASE_TAG}" \
+            -PappVersion.runNumber="${{ github.run_number }}" \
+            -PappVersion.releaseName="${{ steps.appversion.outputs.release_name }}" \
+            --stacktrace
+
+      # CocoaPods is preinstalled on macos-14, so we just install pods.
+      # This transitively drives :shared:podPublishXCFramework via the KMP
+      # CocoaPods plugin so the `shared` static framework is compiled for
+      # iosArm64 and available at link time. --repo-update is only paid
+      # on a spec-repo cache miss; a warm cache already has the resolved
+      # pod versions.
+      - name: pod install
+        working-directory: iosApp
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.pods-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "CocoaPods cache hit — skipping --repo-update"
+            pod install
+          else
+            echo "CocoaPods cache miss — running pod install --repo-update"
+            pod install --repo-update
+          fi
+
+      # Archive Release configuration with signing off across all targets
+      # (main app + widget extension + Pods). CODE_SIGNING_ALLOWED=NO
+      # cascades to dependent build settings, so we don't need per-target
+      # overrides. `-destination` is a generic device slice; simulator
+      # archives don't produce a Payload/*.app that unzips cleanly.
+      - name: Archive iosApp (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -workspace iosApp/iosApp.xcworkspace \
+            -scheme iosApp \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/Octocon.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            DEVELOPMENT_TEAM="" \
+            ONLY_ACTIVE_ARCH=NO
+          if [ ! -d "$RUNNER_TEMP/Octocon.xcarchive/Products/Applications/Octocon.app" ]; then
+            echo "::error::xcodebuild archive did not produce Octocon.app"
+            exit 1
+          fi
+
+      # xcodebuild -exportArchive insists on a signing identity even for
+      # ad-hoc export, so we hand-pack the .ipa directly from the archive's
+      # Applications folder. Standard Payload/*.app layout; the widget
+      # extension embedded inside Octocon.app comes along automatically.
+      - name: Pack unsigned .ipa
+        id: stage
+        run: |
+          set -euo pipefail
+          IPA_DST="$RUNNER_TEMP/Octocon-${RELEASE_TAG}-unsigned.ipa"
+          rm -rf "$RUNNER_TEMP/Payload"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$RUNNER_TEMP/Octocon.xcarchive/Products/Applications/Octocon.app" \
+            "$RUNNER_TEMP/Payload/"
+          (cd "$RUNNER_TEMP" && zip -qr "$IPA_DST" Payload)
+          if [ ! -s "$IPA_DST" ]; then
+            echo "::error::Failed to produce unsigned .ipa at $IPA_DST"
+            exit 1
+          fi
+          echo "Staged $(basename "$IPA_DST") ($(stat -f%z "$IPA_DST") bytes)"
+          echo "ipa=$IPA_DST" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance (unsigned .ipa)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ steps.stage.outputs.ipa }}
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-release
+          path: ${{ steps.stage.outputs.ipa }}
+          if-no-files-found: error
+          retention-days: 14
+
+  # -------------------------------------------------------------------------
+  # Aggregate: pull both artifact sets and publish a draft GitHub Release.
+  # Draft (not published) so release notes can be reviewed before the
+  # release goes live. Existing release for the tag is updated in place.
+  #
+  # Runs unconditionally on tag pushes; on workflow_dispatch it only runs
+  # when `publish: true` is ticked. That keeps dry-run manual invocations
+  # from silently creating a git tag + draft release (softprops/action-gh-
+  # release will create the tag on the current commit if it doesn't
+  # already exist for the input tag name).
+  # -------------------------------------------------------------------------
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [android-release, ios-release]
+    if: github.event_name == 'push' || inputs.publish
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Android artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: android-release
+          path: dist/
+
+      - name: Download iOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-release
+          path: dist/
+
+      - name: List staged assets
+        run: ls -la dist/
+
+      # softprops/action-gh-release creates the release if the tag doesn't
+      # already have one, or updates the existing one in place. draft:true
+      # so the maintainer can review auto-generated notes / signal builds
+      # before making the release public.
+      - name: Publish draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.apk
+            dist/*.aab
+            dist/*.ipa
