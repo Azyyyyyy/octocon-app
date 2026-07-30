@@ -120,19 +120,7 @@ actual fun cropImageNatively(
     }
   }
 
-  // Set a 1:1 (Square) preset instead of assigning `customAspectRatio = CGSizeMake(1.0, 1.0)`.
-  // Kotlin/Native cinterop on this pod does not surface either:
-  //   (a) the `customAspectRatio: CGSize` property (CGSize struct-value setter is
-  //       reported as `Unresolved reference 'customAspectRatio'`), nor
-  //   (b) the `TOCropViewControllerAspectRatioPresetSquare` enum constant from
-  //       `Constants/TOCropViewConstants.h`.
-  // The `aspectRatioPreset` property itself is typed as an `NSInteger` typealias
-  // (`TOCropViewControllerAspectRatioPreset`), so passing the raw ordinal for
-  // `Square` (index 1 in the NS_ENUM) is a stable workaround that matches the
-  // ObjC ABI regardless of how cinterop enumerates the constants.
-  @Suppress("MagicNumber")
-  val aspectRatioPresetSquare: NSInteger = 1L
-  cropViewController.aspectRatioPreset = aspectRatioPresetSquare
+  cropViewController.customAspectRatio = CGSizeMake(1.0, 1.0)
   cropViewController.aspectRatioLockEnabled = true
   cropViewController.resetAspectRatioEnabled = false
   cropViewController.aspectRatioPickerButtonHidden = true
