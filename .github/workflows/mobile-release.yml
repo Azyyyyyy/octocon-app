@@ -188,11 +188,13 @@ jobs:
   # -------------------------------------------------------------------------
   ios-release:
     name: Build unsigned iOS .ipa
-    # macos-15 comes with Xcode 16 by default, which is required for
-    # Firebase iOS SDK 11.x (uses Swift 6 features: `sending`, access
-    # levels on imports, etc.). The pbxproj is already on
-    # LastSwiftUpdateCheck=1620 (Xcode 16.2), so this matches local dev.
-    runs-on: macos-15
+    # macos-26 ships Xcode 26 with the iOS 26 SDK, which Compose
+    # Multiplatform 1.11.x emits references to (e.g. `UIViewLayoutRegion`
+    # in `CMPLayoutRegion.o`). Older SDKs (macos-15 → Xcode 16.4 / iOS 18.5)
+    # fail at link time with `Undefined symbols for architecture arm64:
+    # "_OBJC_CLASS_$_UIViewLayoutRegion"`. Xcode 26 also keeps the Swift 6
+    # / Firebase 11.x compatibility we needed when we first left macos-14.
+    runs-on: macos-26
     permissions:
       contents: read
       id-token: write
@@ -277,7 +279,7 @@ jobs:
             -PappVersion.releaseName="${{ steps.appversion.outputs.release_name }}" \
             --stacktrace
 
-      # CocoaPods is preinstalled on macos-15, so we just install pods.
+      # CocoaPods is preinstalled on macos-26, so we just install pods.
       # This transitively drives :shared:podPublishXCFramework via the KMP
       # CocoaPods plugin so the `shared` static framework is compiled for
       # iosArm64 and available at link time. --repo-update is only paid
