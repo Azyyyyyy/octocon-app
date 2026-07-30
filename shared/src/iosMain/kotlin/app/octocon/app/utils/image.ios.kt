@@ -8,7 +8,6 @@ import cocoapods.SDWebImage.SDImageCoderEncodeMaxPixelSize
 import cocoapods.SDWebImage.SDImageFormatWebP
 import cocoapods.SDWebImageWebPCoder.SDImageWebPCoder
 import cocoapods.TOCropViewController.TOCropViewController
-import cocoapods.TOCropViewController.TOCropViewControllerAspectRatioPresetSquare
 import com.mr0xf00.easycrop.core.images.ImageSrc
 import io.github.vinceglb.filekit.PlatformFile
 import kotlinx.cinterop.CValue
@@ -121,13 +120,19 @@ actual fun cropImageNatively(
     }
   }
 
-  // Use the enum-typed preset (semantically identical 1:1 crop) instead of
-  // `customAspectRatio = CGSizeMake(1.0, 1.0)`. Kotlin/Native cinterop generates a
-  // pod-local shadow of platform.CoreGraphics.CGSize (as `cocoapods.TOCropViewController.CGSize`),
-  // which makes the CGSize-typed property unresolvable from Kotlin — the setter's
-  // parameter type doesn't unify with the platform.CoreGraphics `CGSizeMake` return type.
-  // See discuss.kotlinlang.org/t/25882 for the underlying cinterop behaviour.
-  cropViewController.aspectRatioPreset = TOCropViewControllerAspectRatioPresetSquare
+  // Set a 1:1 (Square) preset instead of assigning `customAspectRatio = CGSizeMake(1.0, 1.0)`.
+  // Kotlin/Native cinterop on this pod does not surface either:
+  //   (a) the `customAspectRatio: CGSize` property (CGSize struct-value setter is
+  //       reported as `Unresolved reference 'customAspectRatio'`), nor
+  //   (b) the `TOCropViewControllerAspectRatioPresetSquare` enum constant from
+  //       `Constants/TOCropViewConstants.h`.
+  // The `aspectRatioPreset` property itself is typed as an `NSInteger` typealias
+  // (`TOCropViewControllerAspectRatioPreset`), so passing the raw ordinal for
+  // `Square` (index 1 in the NS_ENUM) is a stable workaround that matches the
+  // ObjC ABI regardless of how cinterop enumerates the constants.
+  @Suppress("MagicNumber")
+  val aspectRatioPresetSquare: NSInteger = 1L
+  cropViewController.aspectRatioPreset = aspectRatioPresetSquare
   cropViewController.aspectRatioLockEnabled = true
   cropViewController.resetAspectRatioEnabled = false
   cropViewController.aspectRatioPickerButtonHidden = true
