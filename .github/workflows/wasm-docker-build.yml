@@ -85,9 +85,10 @@ jobs:
 
   # Fast JVM run of every `commonTest` case (~30s after warm cache). Runs in
   # parallel with `test` to give PR authors near-immediate feedback if a common
-  # test breaks, without paying the Android emulator boot. The Android job
-  # remains the deploy gate (`build-wasm-image needs: test`) — a flaky Skia/AWT
-  # failure on this job cannot, by itself, block a deploy.
+  # test breaks, without paying the Android emulator boot. Now part of the
+  # `build-wasm-image` deploy gate (see the `needs:` list on that job), so a
+  # Skia/AWT flake here must be treated as a real blocker that needs a rerun
+  # rather than silently ignored.
   desktop-test:
     name: shared :desktopTest
     runs-on: ubuntu-latest
@@ -125,9 +126,11 @@ jobs:
   # to obtain a real token, then exercises ApiInterfaceImpl through the
   # Phoenix WebSocket + endpoint-proxy paths (LoadClient + CreateAlter).
   #
-  # Not currently a deploy gate (build-wasm-image still needs only `test`).
-  # Treat as parity with desktop-test: fast PR feedback, surface failures
-  # via branch protection in the GH UI rather than via `needs:` here.
+  # Part of the `build-wasm-image` deploy gate (see the `needs:` list on
+  # that job). A Testcontainers hiccup or a ghcr.io outage pulling the
+  # backend image therefore blocks WASM deploy until a rerun succeeds —
+  # that's the accepted trade-off for guaranteeing every WASM ship has
+  # green end-to-end signal.
   # Approximate cost on a cold runner: ~30 s image pull + ~5 s tests.
   #
   # Requirements satisfied implicitly on `ubuntu-latest`:
@@ -169,8 +172,135 @@ jobs:
             shared/build/reports/tests/desktopIntegrationTest/
             shared/build/test-results/desktopIntegrationTest/
 
+  # Quick iOS build + test pass. Deliberately mirrors the iOS half of
+  # mobile-release.yml but stops at `xcodebuild build` — no archive, no
+  # IPA pack, no attest, no upload. Goal is a ~10-15 min warm signal that
+  # a future mobile release will still compile, plus running the same
+  # `commonTest` corpus on iOS that `test` runs on Android.
+  #
+  # macos-26 for iOS 26 SDK parity with mobile-release (Compose
+  # Multiplatform 1.11.x emits `UIViewLayoutRegion` refs that only link
+  # against the iOS 26 SDK — see the runner comment on mobile-release).
+  # Cache keys deliberately match mobile-release.yml so PR runs warm the
+  # ~/.konan and CocoaPods caches that the release workflow will re-use.
+  ios-test:
+    name: shared :iosSimulatorArm64Test + xcodebuild build
+    runs-on: macos-26
+    timeout-minutes: 40
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      # Same key as mobile-release.yml so the two workflows share the
+      # ~/.konan cache slice (~1-2 GB of Kotlin/Native compiler +
+      # prebuilts). Adding iosSimulatorArm64 here grows the slice by a
+      # simulator-arch triple; still well under the 10 GB repo quota.
+      - name: Cache Kotlin/Native (~/.konan)
+        uses: actions/cache@v6
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ hashFiles('gradle.properties') }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
+          restore-keys: |
+            konan-${{ runner.os }}-${{ hashFiles('gradle.properties') }}-
+            konan-${{ runner.os }}-
+
+      # Same key as mobile-release.yml. The cache-hit output gates
+      # whether `pod install` needs `--repo-update`.
+      - name: Cache CocoaPods
+        id: pods-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cocoapods
+            ~/Library/Caches/CocoaPods
+            iosApp/Pods
+          key: cocoapods-${{ runner.os }}-${{ hashFiles('iosApp/Podfile.lock') }}
+          restore-keys: |
+            cocoapods-${{ runner.os }}-
+
+      # Same prep as mobile-release but without `-PappVersion.*` flags —
+      # CI doesn't need release-shaped version stamps. writeIosVersionXcconfig
+      # is still needed so the Podfile's post_install hook can chain
+      # Version.generated.xcconfig into every Pods xcconfig at pod-install
+      # time; generateDummyFramework is required or pod install fails with
+      # "Kotlin framework 'shared' doesn't exist yet".
+      - name: Prepare KMP iOS artifacts
+        run: |
+          set -euo pipefail
+          ./gradlew :shared:writeIosVersionXcconfig :shared:generateDummyFramework --stacktrace
+
+      - name: pod install
+        working-directory: iosApp
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.pods-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "CocoaPods cache hit — skipping --repo-update"
+            pod install
+          else
+            echo "CocoaPods cache miss — running pod install --repo-update"
+            pod install --repo-update
+          fi
+
+      # Fast smoke compile of the iOS test source set. Analog to the
+      # `Compile instrumented tests` step in the Android job — fails fast
+      # on source-set / cinterop / pod-drift issues before we pay
+      # simulator boot cost in the test step below.
+      - name: Compile iOS simulator tests
+        run: ./gradlew :shared:compileTestKotlinIosSimulatorArm64 --stacktrace
+
+      # Build the Xcode target for Simulator arch. Skips archive, IPA
+      # pack, signing, and attestation — the pieces mobile-release adds
+      # on top. On macos-26 Apple Silicon the Simulator arch is
+      # `iosSimulatorArm64`, same LLVM target family as the `iosArm64`
+      # device build mobile-release uses, so Swift + KMP + linker errors
+      # surface identically. Difference vs mobile-release is limited to
+      # signing/entitlements (skipped) and thin-binary packaging (n/a
+      # for `build`).
+      - name: xcodebuild build (Simulator)
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -workspace iosApp/iosApp.xcworkspace \
+            -scheme iosApp \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            DEVELOPMENT_TEAM=""
+
+      # Direct KMP analog of :shared:connectedAndroidDeviceTest — same
+      # commonTest source set, compiled for iosSimulatorArm64, launched
+      # on a Kotlin/Native-managed simulator. Iterates the same test
+      # corpus across both mobile targets.
+      - name: Run :shared:iosSimulatorArm64Test
+        run: ./gradlew :shared:iosSimulatorArm64Test --stacktrace
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shared-ios-test-report
+          path: |
+            shared/build/reports/tests/iosSimulatorArm64Test/
+            shared/build/test-results/iosSimulatorArm64Test/
+
   build-wasm-image:
-    needs: test
+    needs: [test, desktop-test, integration-test, ios-test]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
