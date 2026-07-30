@@ -14,6 +14,11 @@ build/
 iosApp/iosApp.xcworkspace/*
 iosApp/iosApp.xcodeproj/*
 !iosApp/iosApp.xcodeproj/project.pbxproj
+# Shared schemes are checked in so `xcodebuild -scheme iosApp` works on
+# fresh clones (including CI). User-specific data under xcuserdata/ stays
+# ignored via the wildcard above.
+!iosApp/iosApp.xcodeproj/xcshareddata
+!iosApp/iosApp.xcodeproj/xcshareddata/**
 iosApp/Pods
 androidApp/release/androidApp-release.apk
 /androidApp/sentry.properties
