@@ -8,6 +8,7 @@ import cocoapods.SDWebImage.SDImageCoderEncodeMaxPixelSize
 import cocoapods.SDWebImage.SDImageFormatWebP
 import cocoapods.SDWebImageWebPCoder.SDImageWebPCoder
 import cocoapods.TOCropViewController.TOCropViewController
+import cocoapods.TOCropViewController.TOCropViewControllerAspectRatioPresetSquare
 import com.mr0xf00.easycrop.core.images.ImageSrc
 import io.github.vinceglb.filekit.PlatformFile
 import kotlinx.cinterop.CValue
@@ -120,7 +121,13 @@ actual fun cropImageNatively(
     }
   }
 
-  cropViewController.customAspectRatio = CGSizeMake(1.0, 1.0)
+  // Use the enum-typed preset (semantically identical 1:1 crop) instead of
+  // `customAspectRatio = CGSizeMake(1.0, 1.0)`. Kotlin/Native cinterop generates a
+  // pod-local shadow of platform.CoreGraphics.CGSize (as `cocoapods.TOCropViewController.CGSize`),
+  // which makes the CGSize-typed property unresolvable from Kotlin — the setter's
+  // parameter type doesn't unify with the platform.CoreGraphics `CGSizeMake` return type.
+  // See discuss.kotlinlang.org/t/25882 for the underlying cinterop behaviour.
+  cropViewController.aspectRatioPreset = TOCropViewControllerAspectRatioPresetSquare
   cropViewController.aspectRatioLockEnabled = true
   cropViewController.resetAspectRatioEnabled = false
   cropViewController.aspectRatioPickerButtonHidden = true
