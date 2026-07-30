@@ -66,20 +66,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Need full history so the release-name walk below can reach
           # older commits with `git log --grep=^ReleaseName:`.
           fetch-depth: 0
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       # Resolve the sticky ReleaseName marker for version stamping. The
       # tag itself is already resolved once at workflow level into
@@ -172,7 +172,7 @@ jobs:
             ${{ steps.stage.outputs.aab }}
 
       - name: Upload Android artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-release
           path: |
@@ -202,18 +202,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       # Kotlin/Native compiler + platform libs + prebuilts land under
       # ~/.konan on every fresh macOS runner. Missing it adds ~5 min per
@@ -222,7 +222,7 @@ jobs:
       # compiler; loosely restored across other keys so a Kotlin
       # patch-bump doesn't force a full cold miss.
       - name: Cache Kotlin/Native (~/.konan)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.konan
           key: konan-${{ runner.os }}-${{ hashFiles('gradle.properties') }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
@@ -237,7 +237,7 @@ jobs:
       # output gates whether pod install needs --repo-update below.
       - name: Cache CocoaPods
         id: pods-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cocoapods
@@ -349,7 +349,7 @@ jobs:
           subject-path: ${{ steps.stage.outputs.ipa }}
 
       - name: Upload iOS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-release
           path: ${{ steps.stage.outputs.ipa }}
@@ -377,13 +377,13 @@ jobs:
 
     steps:
       - name: Download Android artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: android-release
           path: dist/
 
       - name: Download iOS artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ios-release
           path: dist/
@@ -396,7 +396,7 @@ jobs:
       # so the maintainer can review auto-generated notes / signal builds
       # before making the release public.
       - name: Publish draft release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
