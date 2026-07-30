@@ -91,9 +91,20 @@ kotlin {
       extraOpts += listOf("-compiler-option", "-fmodules")
     }*/
 
-    pod("TOCropViewController")
-    pod("SDWebImage")
-    pod("SDWebImageWebPCoder")
+    // Enable Clang modules for pods that surface CoreGraphics types (CGSize/CGRect/etc.).
+    // Without -fmodules, cinterop generates a pod-local shadow of platform.CoreGraphics.CGSize,
+    // which breaks assignments like `cropViewController.customAspectRatio = CGSizeMake(...)`
+    // because the setter expects `CValue<cocoapods.TOCropViewController.CGSize>`, not
+    // `CValue<platform.CoreGraphics.CGSize>`. See discuss.kotlinlang.org/t/25882.
+    pod("TOCropViewController") {
+      extraOpts += listOf("-compiler-option", "-fmodules")
+    }
+    pod("SDWebImage") {
+      extraOpts += listOf("-compiler-option", "-fmodules")
+    }
+    pod("SDWebImageWebPCoder") {
+      extraOpts += listOf("-compiler-option", "-fmodules")
+    }
   }
 
   sourceSets {
