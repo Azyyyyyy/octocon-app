@@ -120,7 +120,7 @@ jobs:
             shared/build/reports/tests/desktopTest/
             shared/build/test-results/desktopTest/
 
-  # End-to-end slice against the published Octocon backend image
+  # End-to-end slice against the published Interfold backend image
   # (digest-pinned in shared/src/desktopIntegrationTest/.../BackendContainer.kt).
   # Boots the image in Testcontainers, drives the OAuth-callback auth flow
   # to obtain a real token, then exercises ApiInterfaceImpl through the
@@ -373,7 +373,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/octocon-wasm
+          images: ghcr.io/${{ github.repository_owner }}/interfold-wasm
           tags: |
             type=ref,event=branch
             type=sha,prefix=sha-
@@ -400,5 +400,5 @@ jobs:
           # the bootstrapper's manifest inspection.
           provenance: false
           sbom: false
-          cache-from: type=gha,scope=octocon-wasm
-          cache-to: type=gha,mode=max,scope=octocon-wasm
+          cache-from: type=gha,scope=interfold-wasm
+          cache-to: type=gha,mode=max,scope=interfold-wasm
